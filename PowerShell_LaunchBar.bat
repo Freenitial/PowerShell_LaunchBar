@@ -4,12 +4,50 @@
     REM Version : 0.7
 
     cls & @echo off & title PowerShell_LaunchBar
-    copy /y "%~f0" "%TEMP%\%~n0.ps1" >NUL && powershell -Nologo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%TEMP%\%~n0.ps1"
+    copy /y "%~f0" "%TEMP%\%~n0.ps1" >NUL && powershell -Nologo -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "%TEMP%\%~n0.ps1"
     exit /b
 
 #>
 
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Drawing
+# --- DPI-Aware ---
+Add-Type -MemberDefinition @"
+[DllImport("user32.dll")]
+public static extern bool SetProcessDPIAware();
+"@ -Name "DpiHelper" -Namespace "Win32"
+[Win32.DpiHelper]::SetProcessDPIAware() | Out-Null
+
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class MonitorUtil {
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+}
+"@
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class DpiUtil {
+    public const int MDT_EFFECTIVE_DPI = 0;
+    [DllImport("Shcore.dll")]
+    public static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+}
+"@
+function Get-ScalingFactor {
+    param([IntPtr]$hwnd)
+    # MONITOR_DEFAULTTONEAREST = 2
+    $hMonitor = [MonitorUtil]::MonitorFromWindow($hwnd, 2)
+    $dpiX = 0; $dpiY = 0
+    $result = [DpiUtil]::GetDpiForMonitor($hMonitor, [DpiUtil]::MDT_EFFECTIVE_DPI, [ref]$dpiX, [ref]$dpiY)
+    if ($result -eq 0) {
+         return [double]$dpiX / 96.0
+    }
+    else {
+         return 1.0
+    }
+}
+
+Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 
 # --- INI Parsing and Writing Functions ---
@@ -19,11 +57,7 @@ function Read-IniFile ($Path) {
         $section = ""
         foreach ($line in Get-Content $Path) {
             $line = $line.Trim()
-            if ($line -match '^\[(.+)\]') {
-                $section = $Matches[1]
-                $ini[$section] = @{}
-                continue
-            }
+            if ($line -match '^\[(.+)\]') { $section = $Matches[1]; $ini[$section] = @{}; continue }
             if ($line -match '^(.*?)=(.*)$') {
                 $key = $Matches[1].Trim(); $value = $Matches[2].Trim()
                 if ($section) { $ini[$section][$key] = $value } else { $ini[$key] = $value }
@@ -38,9 +72,7 @@ function Write-IniFile ($Path, $Data) {
         if ($Data[$section] -is [hashtable]) {
             $lines += "[$section]"
             foreach ($k in $Data[$section].Keys) { $lines += "$k=$($Data[$section][$k])" }
-        } else {
-            $lines += "$section=$($Data[$section])"
-        }
+        } else { $lines += "$section=$($Data[$section])" }
     }
     Set-Content -Path $Path -Value $lines
 }
@@ -142,12 +174,13 @@ $global:NewShortcutShowText = ([string]$global:Settings["NewShortcutShowText"]).
 $global:NewShortcutOpenAsAdmin = ([string]$global:Settings["NewShortcutOpenAsAdmin"]).ToLower()
 $global:NewShortcutAlignRight = ([string]$global:Settings["NewShortcutAlignRight"]).ToLower()
 switch ($global:ThicknessMode) {
-    "Small"   { $global:BarThickness = 25 }
-    "Medium"  { $global:BarThickness = 32 }
-    "Large"   { $global:BarThickness = 40 }
-    default   { $global:BarThickness = 25 }
+    "Small"   { $global:BaseThickness = 25 }
+    "Medium"  { $global:BaseThickness = 32 }
+    "Large"   { $global:BaseThickness = 40 }
+    default   { $global:BaseThickness = 25 }
 }
-$global:OriginalWorkArea = $null
+$global:BarThickness = $global:BaseThickness  # en DIP ; les ajustements DPI se font lors du calcul de la zone
+$global:BaseWorkArea = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 
 # --- Admin Helper Variables ---
 function Start-AdminHelper {
@@ -189,7 +222,6 @@ while (`$true) {
     }
     catch { Write-Warning "Error while starting admin helper : $_" }
 }
-
 function Invoke-AdminCommand {
     param([string]$filePath)
     if (-not $script:AdminHelperStarted) { Write-Warning "Admin helper not started"; return }
@@ -263,7 +295,6 @@ function Invoke-AdminCommand {
     </DockPanel>
 </Window>
 "@
-
 $reader = New-Object System.Xml.XmlNodeReader($xaml)
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $settingsButton = $window.FindName("SettingsButton")
@@ -279,42 +310,93 @@ function Update-ButtonToolTip($btn) {
     }
 }
 
-# --- AppBar Positioning ---
+Add-Type @'
+using System; 
+using System.Runtime.InteropServices;
+using System.Drawing;
+public class DPI {  
+  [DllImport("gdi32.dll")]
+  static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
+  public enum DeviceCap {
+      VERTRES = 10,
+      DESKTOPVERTRES = 117
+  } 
+  public static float scaling() {
+      Graphics g = Graphics.FromHwnd(IntPtr.Zero);
+      IntPtr desktop = g.GetHdc();
+      int LogicalScreenHeight = GetDeviceCaps(desktop, (int)DeviceCap.VERTRES);
+      int PhysicalScreenHeight = GetDeviceCaps(desktop, (int)DeviceCap.DESKTOPVERTRES);
+      return (float)PhysicalScreenHeight / (float)LogicalScreenHeight;
+  }
+}
+'@ -ReferencedAssemblies 'System.Drawing.dll' -ErrorAction Stop
+
+function Refresh-WorkArea {
+    $appBarData = New-Object AppBar+APPBARDATA
+    $appBarData.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($appBarData)
+    $appBarData.hWnd = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+    [AppBar]::SHAppBarMessage([AppBar]::ABM_REMOVE, [ref]$appBarData)
+    Start-Sleep -Milliseconds 100
+    Update-AppBarPosition -position $global:ToolbarLocation
+}
+
+# --- AppBar Positioning (DPI-Aware) ---
 function Update-AppBarPosition {
     param([string]$position)
     $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+    $dummy = New-Object AppBar+APPBARDATA
+    $dummy.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($dummy)
+    $dummy.hWnd = $hwnd
+    [AppBar]::SHAppBarMessage([AppBar]::ABM_REMOVE, [ref]$dummy)
+
+    $currentWorkArea = New-Object AppBar+Rect
+    [AppBar]::SystemParametersInfo([AppBar]::SPI_GETWORKAREA, 0, [ref]$currentWorkArea, 0)
+
+    $dpiFactor = Get-ScalingFactor $hwnd
+    $baseArea = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+
+    $winWidth = $baseArea.Width / $dpiFactor
+    $window.Width = $winWidth
+    $window.Height = $global:BarThickness
+    $window.Left = $baseArea.Left / $dpiFactor
+
+    switch ($position) {
+        "Top" {
+            $window.Top = 0
+            $edge = [AppBar]::ABE_TOP
+            $offset = [int]($global:BarThickness * $dpiFactor)
+            $newWorkArea = New-Object AppBar+Rect
+            $newWorkArea.left   = $baseArea.Left
+            $newWorkArea.top    = $baseArea.Top + $offset
+            $newWorkArea.right  = $baseArea.Right
+            $newWorkArea.bottom = $baseArea.Bottom
+        }
+        "Bottom" {
+            $winHeight = $baseArea.Height / $dpiFactor
+            $window.Top = $winHeight - $global:BarThickness
+            $edge = [AppBar]::ABE_BOTTOM
+            $offset = [int]($global:BarThickness * $dpiFactor)
+            $newWorkArea = New-Object AppBar+Rect
+            $newWorkArea.left   = $baseArea.Left
+            $newWorkArea.top    = $baseArea.Top
+            $newWorkArea.right  = $baseArea.Right
+            $newWorkArea.bottom = $baseArea.Bottom - $offset
+        }
+    }
+    $appBarRect = New-Object AppBar+Rect
+    $appBarRect.left   = [int]($window.Left * $dpiFactor)
+    $appBarRect.top    = [int]($window.Top * $dpiFactor)
+    $appBarRect.right  = [int](($window.Left + $window.Width) * $dpiFactor)
+    $appBarRect.bottom = [int](($window.Top + $window.Height) * $dpiFactor)
     $appBarData = New-Object AppBar+APPBARDATA
     $appBarData.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($appBarData)
     $appBarData.hWnd = $hwnd
-    [void][AppBar]::SHAppBarMessage([AppBar]::ABM_REMOVE, [ref]$appBarData)
-    if (-not $global:OriginalWorkArea) { $global:OriginalWorkArea = New-Object AppBar+Rect ; [AppBar]::SystemParametersInfo([AppBar]::SPI_GETWORKAREA, 0, [ref]$global:OriginalWorkArea, 0) }
-    else { [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$global:OriginalWorkArea, [AppBar]::SPIF_UPDATEINIFILE) }
-    $newWorkArea = New-Object AppBar+Rect
-    $window.Width  = $global:OriginalWorkArea.right - $global:OriginalWorkArea.left
-    $window.Height = $global:BarThickness
-    $window.Left   = $global:OriginalWorkArea.left
-    switch ($position) {
-        "Top" {
-            $window.Top = $global:OriginalWorkArea.top
-            $appBarData.uEdge = [AppBar]::ABE_TOP
-            $newWorkArea.top = $global:OriginalWorkArea.top + $global:BarThickness
-            $newWorkArea.bottom = $global:OriginalWorkArea.bottom
-        }
-        "Bottom" {
-            $window.Top = $global:OriginalWorkArea.bottom - $global:BarThickness
-            $appBarData.uEdge = [AppBar]::ABE_BOTTOM
-            $newWorkArea.top = $global:OriginalWorkArea.top
-            $newWorkArea.bottom = $global:OriginalWorkArea.bottom - $global:BarThickness
-        }
-    }
-    $newWorkArea.left  = $global:OriginalWorkArea.left
-    $newWorkArea.right = $global:OriginalWorkArea.right
-    $appBarData.rc = [pscustomobject]@{ left=$window.Left ; top=$window.Top ; right=$window.Left+$window.Width ; bottom=$window.Top+$window.Height}
+    $appBarData.uEdge = $edge
+    $appBarData.rc = $appBarRect
     $global:CallbackMessage = [AppBar]::SHAppBarMessage([AppBar]::ABM_NEW, [ref]$appBarData)
+    Start-Sleep -Milliseconds 200
     [AppBar]::SHAppBarMessage([AppBar]::ABM_SETPOS, [ref]$appBarData)
     [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$newWorkArea, [AppBar]::SPIF_UPDATEINIFILE)
-    Start-Sleep -Milliseconds 200
-    [AppBar]::SystemParametersInfo([AppBar]::SPI_GETWORKAREA, 0, [ref]$newWorkArea, 0)
 }
 
 # --- Save Settings ---
@@ -517,9 +599,7 @@ function Add-ShortcutButton {
                     $toolTip.Foreground = [System.Windows.Media.Brushes]::White
                     $btn.ToolTip = $toolTip
                     [System.Windows.Controls.ToolTipService]::SetInitialShowDelay($btn, 0)
-                } catch {
-                    Write-Warning "Error while creating ToolTip: $_"
-                }
+                } catch { Write-Warning "Error while creating ToolTip: $_" }
             }
             Save-Shortcuts
         }
@@ -542,7 +622,7 @@ function Add-ShortcutButton {
                 $leftStack.Children.Add($btn) | Out-Null
             }
         }
-        Save-Shortcuts ; Update-ShortcutStackMargins
+        Save-Shortcuts; Update-ShortcutStackMargins
     })
     foreach ($item in @($removeItem, $renameItem, $openAdminItem, $showTextItem, $alignRightItem)) { $contextMenu.Items.Add($item) | Out-Null }
     $button.ContextMenu = $contextMenu
@@ -764,9 +844,9 @@ $settingsButton.Add_Click({
     $itemSettings.Add_Click({ Show-OptionsWindow })
     $itemClose = New-Object System.Windows.Controls.MenuItem; $itemClose.Header = "Close toolbar"
     $itemClose.Add_Click({
-        if ($global:OriginalWorkArea) {
-            [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$global:OriginalWorkArea, [AppBar]::SPIF_UPDATEINIFILE)
-        }
+        # Restauration de la zone de travail par défaut (Bounds) du PrimaryScreen
+        $baseWorkArea = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref](New-Object AppBar+Rect -Property @{ left = $baseWorkArea.Left; top = $baseWorkArea.Top; right = $baseWorkArea.Right; bottom = $baseWorkArea.Bottom }), [AppBar]::SPIF_UPDATEINIFILE)
         if ($global:AdminHelperProcess -and -not $global:AdminHelperProcess.HasExited) { $global:AdminHelperProcess.Kill() }
         $window.Close()
     })
@@ -817,13 +897,13 @@ function Show-OptionsWindow {
     $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK; $form.Controls.Add($okButton); $form.AcceptButton = $okButton
     $radioTop.Add_CheckedChanged({ if ($radioTop.Checked) { $global:ToolbarLocation = "Top"; Update-AppBarPosition -position "Top"; Update-ShortcutStackMargins } })
     $radioBottom.Add_CheckedChanged({ if ($radioBottom.Checked) { $global:ToolbarLocation = "Bottom"; Update-AppBarPosition -position "Bottom"; Update-ShortcutStackMargins } })
-    $rSmall.Add_CheckedChanged({ if ($rSmall.Checked) { $global:ThicknessMode = "Small"; $global:BarThickness = 25; Update-AppBarPosition -position $global:ToolbarLocation; Update-ShortcutButtonsAppearance } })
-    $rMedium.Add_CheckedChanged({ if ($rMedium.Checked) { $global:ThicknessMode = "Medium"; $global:BarThickness = 32; Update-AppBarPosition -position $global:ToolbarLocation; Update-ShortcutButtonsAppearance } })
-    $rLarge.Add_CheckedChanged({ if ($rLarge.Checked) { $global:ThicknessMode = "Large"; $global:BarThickness = 40; Update-AppBarPosition -position $global:ToolbarLocation; Update-ShortcutButtonsAppearance } })
+    $rSmall.Add_CheckedChanged({ if ($rSmall.Checked) { $global:ThicknessMode = "Small"; $global:BarThickness = $global:BaseThickness = 25; Update-AppBarPosition -position $global:ToolbarLocation; Update-ShortcutButtonsAppearance } })
+    $rMedium.Add_CheckedChanged({ if ($rMedium.Checked) { $global:ThicknessMode = "Medium"; $global:BarThickness = $global:BaseThickness = 32; Update-AppBarPosition -position $global:ToolbarLocation; Update-ShortcutButtonsAppearance } })
+    $rLarge.Add_CheckedChanged({ if ($rLarge.Checked) { $global:ThicknessMode = "Large"; $global:BarThickness = $global:BaseThickness = 40; Update-AppBarPosition -position $global:ToolbarLocation; Update-ShortcutButtonsAppearance } })
     $rLight.Add_CheckedChanged({ if ($rLight.Checked) { $global:Theme = "Light"; Update-ThemeAppearance } })
     $rDark.Add_CheckedChanged({ if ($rDark.Checked) { $global:Theme = "Dark"; Update-ThemeAppearance } })
     $cbShowText.Add_CheckedChanged({ if ($cbShowText.Checked) { $global:NewShortcutShowText = "true" } else { $global:NewShortcutShowText = "false" } })
-    $cbOpenAdmin.Add_CheckedChanged({ if ($cbOpenAdmin.Checked) { $global:NewShortcutOpenAsAdmin = "true" } else { $global:NewShortcutOpenAdmin = "false" } })
+    $cbOpenAdmin.Add_CheckedChanged({ if ($cbOpenAdmin.Checked) { $global:NewShortcutOpenAsAdmin = "true" } else { $global:NewShortcutOpenAsAdmin = "false" } })
     $cbAlignRight.Add_CheckedChanged({ if ($cbAlignRight.Checked) { $global:NewShortcutAlignRight = "true" } else { $global:NewShortcutAlignRight = "false" } })
     if ($form.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Save-Settings }
     else {
@@ -899,14 +979,26 @@ $window.Add_Drop({
     $_.Handled = $true
 })
 
-# --- Configure AppBar and Message Hook ---
 $window.Add_Loaded({
-    Update-AppBarPosition -position $global:ToolbarLocation; Update-ThemeAppearance
+    Update-AppBarPosition -position $global:ToolbarLocation
+    Update-ThemeAppearance
     $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
-    if ($hwnd -eq [IntPtr]::Zero) { Write-Error "Invalid window handle."; return }
+    if ($hwnd -eq [IntPtr]::Zero) { 
+        Write-Error "Invalid window handle."
+        return 
+    }
     $handler = { param($msg, $wParam, $lParam) }
-    try { [MessageHook]::AddHook($hwnd, $global:CallbackMessage, $handler) }
-    catch { Write-Error "Error adding message hook: $_" }
+    try { 
+        [MessageHook]::AddHook($hwnd, $global:CallbackMessage, $handler) 
+    }
+    catch { 
+        Write-Error "Error adding message hook: $_" 
+    }
+    [Microsoft.Win32.SystemEvents]::add_DisplaySettingsChanged({
+        Start-Sleep -Milliseconds 500  # Attendre que Windows termine ses modifications
+        Refresh-WorkArea
+        Update-ShortcutButtonsAppearance
+    })
 })
 
 # --- Show Main Window ---
