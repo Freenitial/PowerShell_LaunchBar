@@ -4,7 +4,7 @@
     REM Version : 0.7
 
     cls & @echo off & title PowerShell_LaunchBar
-    copy /y "%~f0" "%TEMP%\%~n0.ps1" >NUL && powershell -Nologo -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "%TEMP%\%~n0.ps1"
+    copy /y "%~f0" "%TEMP%\%~n0.ps1" >NUL && powershell -Nologo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%TEMP%\%~n0.ps1"
     exit /b
 
 #>
