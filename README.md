@@ -15,7 +15,6 @@
 - ↔️ **Left/Right alignment options for each shortcut**
 - 💾 **Import/Export shortcuts configuration**
 - 🔄 **Real-time updates and changes**
-- 🎯 **Smart positioning with Windows workspace**
 
 --------------------
 
