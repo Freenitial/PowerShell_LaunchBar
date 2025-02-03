@@ -55,3 +55,4 @@ Settings are stored in `%LOCALAPPDATA%\Powershell_Toolbar`
 The scaling detected when the program is opened determines that the toolbar will be dirty-scaled itself the next time Windows parameters are changed.
 Instead, the toolbar should be rebuilt as a fresh script opening on a given Windows scale.
 - No overflow management when too many shortcuts are present
+- Should positionning according to work area instead of raw screen
