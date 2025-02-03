@@ -1,7 +1,7 @@
 <# ::
 
     REM Author  : Leo Gillet - Freenitial on GitHub
-    REM Version : 0.7
+    REM Version : 0.8
 
     cls & @echo off & title PowerShell_LaunchBar
     copy /y "%~f0" "%TEMP%\%~n0.ps1" >NUL && powershell -Nologo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%TEMP%\%~n0.ps1"
