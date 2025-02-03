@@ -50,7 +50,7 @@ Settings are stored in `%LOCALAPPDATA%\Powershell_Toolbar`
 
 --------------------
 
-### To improve (feel free to submit commit)
+### To improve (feel free to submit pull request)
 
 - DPI aware is very poorly implemented. 
 The scaling detected when the program is opened determines that the toolbar will be dirty-scaled itself the next time Windows parameters are changed.
