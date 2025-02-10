@@ -65,7 +65,7 @@ start "" /d "PATH\FOLDER\CONTAINING_batchfile\" "PowerShell_LaunchBar.bat"
 
 To start from other batch or cmd without exit **+ FORCE IMPORT SHORTCUTS FILE**, launch like this :  
 ```
-start "" /d "FOLDER\CONTAINING_batchfile" "PowerShell_LaunchBar" "FULLPATH\TO_IMPORT\SHORTCUT.INI" /f
+start "" /d "FOLDER\CONTAINING_batchfile" PowerShell_LaunchBar "FULLPATH\TO_IMPORT\SHORTCUT.INI" /f
 ```
 
 --------------------
