@@ -57,7 +57,7 @@ Configuration stored in `%LOCALAPPDATA%\Powershell_Toolbar`
 
 To start from other batch or cmd without exit, launch like this :  
 ```
-start "" /d "PATH\FOLDER\CONTAINING_batchfile\" PowerShell_LaunchBar
+start "" /d "FOLDER\CONTAINING_batchfile" PowerShell_LaunchBar
 ```
 
 To start from other batch or cmd without exit **+ FORCE IMPORT SHORTCUTS FILE**, launch like this :  
