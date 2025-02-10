@@ -6,13 +6,13 @@
 
     REM Optionnal arguments : 
     REM     1) Filepath of .ini file containing shortcuts
-    REM     2) /silent to force adding those shortcuts if not already exist
+    REM     2) /f to force adding those shortcuts if not already exist
     REM --------------------------------------------------------------------
     REM To start from other batch or cmd without exit, launch like this :
-    REM start "" /d "PATH_TO_FOLDER_CONTAINING_PowerShell_LaunchBar.bat" "PowerShell_LaunchBar.bat"
+    REM start "" /d "PATH\FOLDER\CONTAINING_batchfile\" PowerShell_LaunchBar
     REM --------------------------------------------------------------------
     REM To start from other batch or cmd without exit + FORCE IMPORT SHORTCUTS FILE, launch like this :
-    REM start "" /d "PATH_TO_FOLDER_CONTAINING_PowerShell_LaunchBar.bat" "PowerShell_LaunchBar.bat" "FULL_PATH\TO_IMPORT\SHORTCUT.INI" /silent
+    REM start "" /d "FOLDER\CONTAINING_batchfile" PowerShell_LaunchBar "FULLPATH\TO_IMPORT\SHORTCUT.INI" /f
 
     copy /y "%~f0" "%TEMP%\%~n0.ps1" >NUL && powershell -Nologo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%TEMP%\%~n0.ps1" "%~1" "%~2"
     exit /b
@@ -445,7 +445,7 @@ function Import-Shortcuts {
         if ($ofd.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
         $FilePath = $ofd.FileName
     }
-    if ($argSilentImport -eq "/silent") { $choice = [System.Windows.Forms.DialogResult]::Yes }
+    if ($argSilentImport -eq "/f") { $choice = [System.Windows.Forms.DialogResult]::Yes }
     elseif ((Test-Path -LiteralPath $shortcutsFile) -and ((Read-IniFile $shortcutsFile).Keys.Count -gt 0)) {
         $choice = [System.Windows.Forms.MessageBox]::Show("Add imported shortcuts to existing ones? (Yes = Append, No = Replace)", "Import Options", [System.Windows.Forms.MessageBoxButtons]::YesNoCancel)
         if ($choice -eq [System.Windows.Forms.DialogResult]::Cancel) { return }
@@ -466,7 +466,7 @@ function Import-Shortcuts {
         $entry = $importData[$section]
         if (Test-Path -LiteralPath $entry.Path) {
             if ($lookup.ContainsKey($entry.Path)) {
-                if ($argSilentImport -ne "/silent") {
+                if ($argSilentImport -ne "/f") {
                     $button = $lookup[$entry.Path]
                     if (-not ($buttonsToBlink | Where-Object { $_.Button -eq $button })) { $buttonsToBlink += [PSCustomObject]@{ Button=$button ; OriginalColor=$button.BackColor } }
                 }
@@ -475,7 +475,7 @@ function Import-Shortcuts {
     }
     Update-Layout
     $form.ResumeLayout()
-    if ($argSilentImport -ne "/silent" -and $buttonsToBlink.Count -gt 0) {
+    if ($argSilentImport -ne "/f" -and $buttonsToBlink.Count -gt 0) {
         for ($i = 1; $i -le 6; $i++) {
             foreach ($item in $buttonsToBlink) { $btn = $item.Button ; $orig = $item.OriginalColor ; $btn.BackColor = if($btn.BackColor -eq 'Orange') { $orig } else { 'Orange' } }
             [System.Windows.Forms.Application]::DoEvents() ; Start-Sleep -Milliseconds 300
