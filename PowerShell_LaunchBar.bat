@@ -567,16 +567,16 @@ function Show-OptionsWindow {
     $btnExport.Add_Click({ Export-Shortcuts })
     $optForm.Controls.Add($btnExport)
 
-    $radioTop.Add_CheckedChanged({ if ($radioTop.Checked) { $global:ToolbarLocation = "Top"; $form.SuspendLayout(); Update-AppBarPosition -position "Top"; $form.ResumeLayout() } })
-    $radioBottom.Add_CheckedChanged({ if ($radioBottom.Checked) { $global:ToolbarLocation = "Bottom"; $form.SuspendLayout(); Update-AppBarPosition -position "Bottom"; $form.ResumeLayout() } })
+    $radioTop.Add_CheckedChanged({ if ($radioTop.Checked) { $global:ToolbarLocation = "Top"; $form.SuspendLayout(); Update-AppBarPosition -position "Top"; $form.ResumeLayout(); Save-Settings } })
+    $radioBottom.Add_CheckedChanged({ if ($radioBottom.Checked) { $global:ToolbarLocation = "Bottom"; $form.SuspendLayout(); Update-AppBarPosition -position "Bottom"; $form.ResumeLayout(); Save-Settings } })
     $rSmall.Add_CheckedChanged({ if ($rSmall.Checked) { $global:ThicknessMode = "Small"; $global:BarThickness = 25; $form.SuspendLayout(); Update-AppBarPosition -position $global:ToolbarLocation; Update-Layout; $form.ResumeLayout() } })
     $rMedium.Add_CheckedChanged({ if ($rMedium.Checked) { $global:ThicknessMode = "Medium"; $global:BarThickness = 32; $form.SuspendLayout(); Update-AppBarPosition -position $global:ToolbarLocation; Update-Layout; $form.ResumeLayout() } })
     $rLarge.Add_CheckedChanged({ if ($rLarge.Checked) { $global:ThicknessMode = "Large"; $global:BarThickness = 40; $form.SuspendLayout(); Update-AppBarPosition -position $global:ToolbarLocation; Update-Layout; $form.ResumeLayout() } })
     $rLight.Add_CheckedChanged({ if ($rLight.Checked) { $global:Theme = "Light"; $form.SuspendLayout(); Update-Layout; $form.ResumeLayout() } })
     $rDark.Add_CheckedChanged({ if ($rDark.Checked) { $global:Theme = "Dark"; $form.SuspendLayout(); Update-Layout; $form.ResumeLayout() } })
-    $cbShowText.Add_CheckedChanged({ $global:NewShortcutShowText = if ($cbShowText.Checked) { "true" } else { "false" } })
-    $cbOpenAdmin.Add_CheckedChanged({ $global:NewShortcutOpenAsAdmin = if ($cbOpenAdmin.Checked) { "true" } else { "false" } })
-    $cbAlignRight.Add_CheckedChanged({ $global:NewShortcutAlignRight = if ($cbAlignRight.Checked) { "true" } else { "false" } })
+    $cbShowText.Add_CheckedChanged({ $global:NewShortcutShowText = if ($cbShowText.Checked) { "true" } else { "false" } ; Save-Settings })
+    $cbOpenAdmin.Add_CheckedChanged({ $global:NewShortcutOpenAsAdmin = if ($cbOpenAdmin.Checked) { "true" } else { "false" } ; Save-Settings })
+    $cbAlignRight.Add_CheckedChanged({ $global:NewShortcutAlignRight = if ($cbAlignRight.Checked) { "true" } else { "false" } ; Save-Settings })
 
     $optForm.ResumeLayout()
     $optForm.ShowDialog() | Out-Null
