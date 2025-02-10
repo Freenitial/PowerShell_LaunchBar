@@ -53,11 +53,8 @@ Configuration stored in `%LOCALAPPDATA%\Powershell_Toolbar`
 
 --------------------
 
-### Optionnal arguments 💉 :
+### Command line 💉 :
 
-1) Filepath of .ini file containing shortcuts
-2) /silent to force adding those shortcuts if not already exist
-    
 To start from other batch or cmd without exit, launch like this :  
 ```
 start "" /d "PATH\FOLDER\CONTAINING_batchfile\" PowerShell_LaunchBar
