@@ -267,7 +267,7 @@ function Update-AppBarPosition {
 function Update-Layout {
     switch ($global:ThicknessMode) { "Small" { $iconSize=14; $fontSize=8 } ; "Medium" { $iconSize=22; $fontSize=10 } ; "Large" { $iconSize=28; $fontSize=12 } }
     $themeColors = if ($global:Theme -eq "Dark") { @{ BackColor = [System.Drawing.Color]::FromArgb(51,51,51); ForeColor = [System.Drawing.Color]::White; BorderColor = [System.Drawing.Color]::DimGray } } 
-    else { @{ BackColor = [System.Drawing.Color]::FromArgb(238,238,238); ForeColor = [System.Drawing.Color]::Black; BorderColor = [System.Drawing.Color]::Gray } }
+                   else { @{ BackColor = [System.Drawing.Color]::FromArgb(238,238,238); ForeColor = [System.Drawing.Color]::Black; BorderColor = [System.Drawing.Color]::Gray } }
     $shortcutsPanel.BackColor=$themeColors.BackColor
     $settingsButton.ForeColor=$themeColors.ForeColor; $settingsButton.FlatAppearance.BorderColor=$themeColors.BorderColor; $settingsButton.BackColor=$shortcutsPanel.BackColor
     $dragIndicator.Height = $global:BarThickness
