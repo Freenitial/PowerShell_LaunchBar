@@ -9,7 +9,7 @@
     REM     2) /f to force adding those shortcuts if not already exist
     REM --------------------------------------------------------------------
     REM To start from other batch or cmd without exit, launch like this :
-    REM start "" /d "PATH\FOLDER\CONTAINING_batchfile\" PowerShell_LaunchBar
+    REM start "" /d "FOLDER\CONTAINING_batchfile" PowerShell_LaunchBar
     REM --------------------------------------------------------------------
     REM To start from other batch or cmd without exit + FORCE IMPORT SHORTCUTS FILE, launch like this :
     REM start "" /d "FOLDER\CONTAINING_batchfile" PowerShell_LaunchBar "FULLPATH\TO_IMPORT\SHORTCUT.INI" /f
