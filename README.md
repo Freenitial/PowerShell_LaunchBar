@@ -6,15 +6,17 @@
 
 ### Features ✨ 
 
-- 🎯 **Drag & Drop support for easy shortcuts creation**
+- 🎯 **Drag & Drop support for easy shortcuts creation & sorting**
 - 🔄 **Customizable toolbar position (Top/Bottom)**
 - 🎨 **Light and Dark themes**
 - 📏 **Adjustable thickness (Small/Medium/Large)**
-- 🚀 **Run as administrator option for each shortcut (single UAC request)**
-- 📝 **Customizable text display**
+- 🔑 **Run as administrator option for each shortcut (only 1 UAC request)**
+- 🔒 **Securised Pipeline instance for admin launch**
+- 📝 **Customizable shortcut titles**
 - ↔️ **Left/Right alignment options for each shortcut**
 - 💾 **Import/Export shortcuts configuration**
-- 🔄 **Real-time updates and changes**
+- 🖥️ **Real-time updates and changes, DPI Aware**
+- 🚀 **Just a lite PowerShell script providing full interface**
 
 --------------------
 
@@ -42,17 +44,28 @@
 
 ### Installation 🔧
 
+_Requirement : Windows 10 build 1607 +_
+
 1. Download **PowerShell_LaunchBar.bat**
 2. Double-click to run
 
-Settings are stored in `%LOCALAPPDATA%\Powershell_Toolbar`
+Configuration stored in `%LOCALAPPDATA%\Powershell_Toolbar`
 
 --------------------
 
-### To improve (feel free to submit pull request)
+### Optionnal arguments 💉 :
 
-- DPI aware is very poorly implemented. 
-The scaling detected when the program is opened determines that the toolbar will be dirty-scaled itself the next time Windows parameters are changed.
-Instead, the toolbar should be rebuilt as a fresh script opening on a given Windows scale.
-- No overflow management when too many shortcuts are present
-- Should positionning according to work area instead of raw screen
+1) Filepath of .ini file containing shortcuts
+2) /silent to force adding those shortcuts if not already exist
+    
+To start from other batch or cmd without exit, launch like this :  
+```
+start "" /d "PATH\FOLDER\CONTAINING_batchfile\" "PowerShell_LaunchBar.bat"
+```
+
+To start from other batch or cmd without exit + FORCE IMPORT SHORTCUTS FILE, launch like this :  
+```
+start "" /d "PATH\FOLDER\CONTAINING_batchfile\" "PowerShell_LaunchBar.bat" "FULL_PATH\TO_IMPORT\SHORTCUT.INI" /silent
+```
+
+--------------------
