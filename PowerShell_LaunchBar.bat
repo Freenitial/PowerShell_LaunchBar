@@ -18,7 +18,10 @@
     exit /b
 #>
 
-param([string]$argIniShortcutsFile, [string]$argSilentImport)
+param(
+    [string]$argIniShortcutsFile,
+    [string]$argSilentImport
+)
 
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms
 Add-Type -TypeDefinition @"
@@ -99,6 +102,9 @@ if (-not (Test-Path -LiteralPath $logsPath)) { New-Item -ItemType Directory -Pat
 $logFile = Join-Path $logsPath ("{0:yyyyMMdd_HHmmss}.log" -f (Get-Date))
 if (-not (Test-Path -LiteralPath $logFile)) { New-Item -ItemType File -Path $logFile | Out-Null }
 
+$logFiles = Get-ChildItem -Path $logsPath -File | Sort-Object Name -Descending
+if ($logFiles.Count -gt 20) { $logFiles | Select-Object -Skip 20 | Remove-Item -Force }
+
 function Log {
     param(
         [Parameter(Mandatory = $true)]
@@ -108,13 +114,15 @@ function Log {
     Add-Content -Path $logFile -Value $message
 }
 
+# Global Settings with new admin access fail default option ("Ask" by default)
 $global:Settings = @{
-    ToolbarLocation        = "Top"
-    ThicknessMode          = "Small"
-    Theme                  = "Light"
-    NewShortcutShowText    = "true"
-    NewShortcutOpenAsAdmin = "false"
-    NewShortcutAlignRight  = "false"
+    ToolbarLocation                = "Top"
+    ThicknessMode                  = "Small"
+    Theme                          = "Light"
+    NewShortcutShowText            = "true"
+    NewShortcutOpenAsAdmin         = "false"
+    NewShortcutAlignRight          = "false"
+    NewShortcutAdminAccessFailAlternative = "Ask"
 }
 function Read-IniFile($Path){
     $ini=[ordered]@{}
@@ -146,6 +154,8 @@ $global:Theme                  = $global:Settings["Theme"]
 $global:NewShortcutShowText    = $global:Settings["NewShortcutShowText"]
 $global:NewShortcutOpenAsAdmin = $global:Settings["NewShortcutOpenAsAdmin"]
 $global:NewShortcutAlignRight  = $global:Settings["NewShortcutAlignRight"]
+$global:NewShortcutAdminAccessFailAlternative = $global:Settings["NewShortcutAdminAccessFailAlternative"]
+
 $global:DebounceActive = $false
 $global:BaselineWorkArea = $null
 $global:PrevToolbarLocation = $null
@@ -175,12 +185,13 @@ function Save-Shortcuts {
     foreach ($ctrl in $shortcutsPanel.Controls) {
         if ($ctrl -is [System.Windows.Forms.Button] -and $ctrl.Tag -and $ctrl.Tag.ContainsKey("FilePath")) {
             $data["Shortcut$index"] = @{
-                Path        = $ctrl.Tag.FilePath
-                OpenAsAdmin = $ctrl.Tag.OpenAsAdmin
-                ShowText    = $ctrl.Tag.ShowText
-                AlignRight  = $ctrl.Tag.AlignRight
-                DisplayName = $ctrl.Tag.DisplayName
-                Order       = $ctrl.Tag.Order
+                Path                         = $ctrl.Tag.FilePath
+                OpenAsAdmin                  = $ctrl.Tag.OpenAsAdmin
+                ShowText                     = $ctrl.Tag.ShowText
+                AlignRight                   = $ctrl.Tag.AlignRight
+                DisplayName                  = $ctrl.Tag.DisplayName
+                Order                        = $ctrl.Tag.Order
+                AdminAccessFailAlternative   = $ctrl.Tag.AdminAccessFailAlternative
             }
             $index++
         }
@@ -189,12 +200,13 @@ function Save-Shortcuts {
 }
 
 function Save-Settings {
-    $global:Settings["ToolbarLocation"]        = $global:ToolbarLocation
-    $global:Settings["ThicknessMode"]          = $global:ThicknessMode
-    $global:Settings["Theme"]                  = $global:Theme
-    $global:Settings["NewShortcutShowText"]    = $global:NewShortcutShowText
-    $global:Settings["NewShortcutOpenAsAdmin"] = $global:NewShortcutOpenAsAdmin
-    $global:Settings["NewShortcutAlignRight"]  = $global:NewShortcutAlignRight
+    $global:Settings["ToolbarLocation"]                = $global:ToolbarLocation
+    $global:Settings["ThicknessMode"]                  = $global:ThicknessMode
+    $global:Settings["Theme"]                          = $global:Theme
+    $global:Settings["NewShortcutShowText"]            = $global:NewShortcutShowText
+    $global:Settings["NewShortcutOpenAsAdmin"]         = $global:NewShortcutOpenAsAdmin
+    $global:Settings["NewShortcutAlignRight"]          = $global:NewShortcutAlignRight
+    $global:Settings["NewShortcutAdminAccessFailAlternative"] = $global:NewShortcutAdminAccessFailAlternative
     Write-IniFile $settingsFile @{ Settings = $global:Settings }
 }
 
@@ -247,7 +259,7 @@ $dragIndicator.Visible = $false
 $shortcutsPanel.Controls.Add($dragIndicator)
 $dragIndicator.BringToFront()
 
-# --- Update Appbar position and working area ---
+# --- Update AppBar position and working area ---
 function Update-AppBarPosition {
     param([string]$position)
     $handle = $form.Handle
@@ -261,10 +273,22 @@ function Update-AppBarPosition {
     if (-not $global:BaselineWorkArea -or (($global:BaselineWorkArea.right - $global:BaselineWorkArea.left) -ne ($currentWorkArea.right - $currentWorkArea.left))) {
         $global:BaselineWorkArea = New-Object AppBar+RECT -Property @{ left=$currentWorkArea.left; top=$currentWorkArea.top; right=$currentWorkArea.right; bottom=$currentWorkArea.bottom }
     }
-    $form.Left = $global:BaselineWorkArea.left ; $form.Width = $global:BaselineWorkArea.right - $global:BaselineWorkArea.left ; $form.Height = $global:BarThickness
+    $form.Left = $global:BaselineWorkArea.left
+    $form.Width = $global:BaselineWorkArea.right - $global:BaselineWorkArea.left
+    $form.Height = $global:BarThickness
     switch ($position) {
-        "Top" { $edge=[AppBar]::ABE_TOP ; $form.Top=$global:BaselineWorkArea.top ; $workTop=$global:BaselineWorkArea.top+$global:BarThickness ; $workBottom=$global:BaselineWorkArea.bottom}
-        "Bottom" { $edge=[AppBar]::ABE_BOTTOM;$form.Top=$global:BaselineWorkArea.bottom-$global:BarThickness;$workTop=$global:BaselineWorkArea.top;$workBottom=$global:BaselineWorkArea.bottom-$global:BarThickness}
+        "Top" {
+            $edge = [AppBar]::ABE_TOP
+            $form.Top = $global:BaselineWorkArea.top
+            $workTop = $global:BaselineWorkArea.top + $global:BarThickness
+            $workBottom = $global:BaselineWorkArea.bottom
+        }
+        "Bottom" {
+            $edge = [AppBar]::ABE_BOTTOM
+            $form.Top = $global:BaselineWorkArea.bottom - $global:BarThickness
+            $workTop = $global:BaselineWorkArea.top
+            $workBottom = $global:BaselineWorkArea.bottom - $global:BarThickness
+        }
     }
     $appBarData.uEdge = $edge
     $appBarData.rc = New-Object AppBar+RECT -Property @{ left=$form.Left; top=$form.Top; right=$form.Left+$form.Width; bottom=$form.Top+$form.Height }
@@ -278,57 +302,103 @@ function Update-AppBarPosition {
 
 # --- Update layout and appearance ---
 function Update-Layout {
-    switch ($global:ThicknessMode) { "Small" { $iconSize=14; $fontSize=8 } ; "Medium" { $iconSize=22; $fontSize=10 } ; "Large" { $iconSize=28; $fontSize=12 } }
-    $themeColors = if ($global:Theme -eq "Dark") { @{ BackColor = [System.Drawing.Color]::FromArgb(51,51,51); ForeColor = [System.Drawing.Color]::White; BorderColor = [System.Drawing.Color]::DimGray } } 
-                   else { @{ BackColor = [System.Drawing.Color]::FromArgb(238,238,238); ForeColor = [System.Drawing.Color]::Black; BorderColor = [System.Drawing.Color]::Gray } }
-    $shortcutsPanel.BackColor=$themeColors.BackColor
-    $settingsButton.ForeColor=$themeColors.ForeColor; $settingsButton.FlatAppearance.BorderColor=$themeColors.BorderColor; $settingsButton.BackColor=$shortcutsPanel.BackColor
+    switch ($global:ThicknessMode) {
+        "Small"  { $iconSize = 14; $fontSize = 8 }
+        "Medium" { $iconSize = 22; $fontSize = 10 }
+        "Large"  { $iconSize = 28; $fontSize = 12 }
+    }
+    $themeColors = if ($global:Theme -eq "Dark") {
+        @{ BackColor = [System.Drawing.Color]::FromArgb(51,51,51); ForeColor = [System.Drawing.Color]::White; BorderColor = [System.Drawing.Color]::DimGray }
+    } else {
+        @{ BackColor = [System.Drawing.Color]::FromArgb(238,238,238); ForeColor = [System.Drawing.Color]::Black; BorderColor = [System.Drawing.Color]::Gray }
+    }
+    $shortcutsPanel.BackColor = $themeColors.BackColor
+    $settingsButton.ForeColor = $themeColors.ForeColor
+    $settingsButton.FlatAppearance.BorderColor = $themeColors.BorderColor
+    $settingsButton.BackColor = $shortcutsPanel.BackColor
     $dragIndicator.Height = $global:BarThickness
-    $leftButtons = New-Object 'System.Collections.Generic.List[System.Windows.Forms.Button]' ; $rightButtons = New-Object 'System.Collections.Generic.List[System.Windows.Forms.Button]'
+    $leftButtons = New-Object 'System.Collections.Generic.List[System.Windows.Forms.Button]'
+    $rightButtons = New-Object 'System.Collections.Generic.List[System.Windows.Forms.Button]'
     $g = [System.Drawing.Graphics]::FromImage((New-Object System.Drawing.Bitmap(1,1)))
     foreach ($btn in $shortcutsPanel.Controls) {
         if ($btn -is [System.Windows.Forms.Button] -and $btn.Tag -and $btn.Tag.ContainsKey("FilePath")) {
             switch ($global:Theme) {
-                "Dark"  { $btn.FlatAppearance.BorderColor=[System.Drawing.Color]::DimGray; $btn.ForeColor=[System.Drawing.Color]::White; $btn.BackColor=[System.Drawing.Color]::DarkSlateGray }
-                default { $btn.FlatAppearance.BorderColor=[System.Drawing.Color]::Gray; $btn.ForeColor=[System.Drawing.Color]::Black; $btn.BackColor=[System.Drawing.Color]::White }
+                "Dark"  {
+                    $btn.FlatAppearance.BorderColor = [System.Drawing.Color]::DimGray
+                    $btn.ForeColor = [System.Drawing.Color]::White
+                    $btn.BackColor = [System.Drawing.Color]::DarkSlateGray
+                }
+                default {
+                    $btn.FlatAppearance.BorderColor = [System.Drawing.Color]::Gray
+                    $btn.ForeColor = [System.Drawing.Color]::Black
+                    $btn.BackColor = [System.Drawing.Color]::White
+                }
             }
-            if ($btn.Tag["DisplayName"] -ne "") {$displayName=$btn.Tag["DisplayName"]} else {$displayName=$btn.Tag["FilePath"]}
-            if ($btn.Tag["ShowText"] -eq "true") {$btn.Text = " $displayName" ; $tooltip.SetToolTip($btn, $null) }
-            else { $btn.Text = "" ; $tooltip.SetToolTip($btn, $displayName) }
+            if ($btn.Tag["DisplayName"] -ne "") { $displayName = $btn.Tag["DisplayName"] } else { $displayName = $btn.Tag["FilePath"] }
+            if ($btn.Tag["ShowText"] -eq "true") {
+                $btn.Text = " $displayName"
+                $tooltip.SetToolTip($btn, $null)
+            } else {
+                $btn.Text = ""
+                $tooltip.SetToolTip($btn, $displayName)
+            }
             $btn.Height = $global:BarThickness
             $btn.AutoEllipsis = $true
             $btn.TextImageRelation = "ImageBeforeText"
             $btn.ImageAlign = "MiddleLeft"
             $btn.TextAlign = "MiddleLeft"
-            if($btn.Tag.ContainsKey("OriginalImage")-and$btn.Tag["OriginalImage"]) {try{$btn.Image=$btn.Tag["OriginalImage"].GetThumbnailImage($iconSize,$iconSize,$null,[IntPtr]::Zero)}catch{}}
+            if ($btn.Tag.ContainsKey("OriginalImage") -and $btn.Tag["OriginalImage"]) {
+                try { $btn.Image = $btn.Tag["OriginalImage"].GetThumbnailImage($iconSize, $iconSize, $null, [IntPtr]::Zero) } catch { }
+            }
             $txtWidth = [Math]::Ceiling($g.MeasureString($btn.Text, $btn.Font).Width)
-            if ($btn.Tag["ShowText"] -eq "true") {$padding=10} else {$padding=13}
+            if ($btn.Tag["ShowText"] -eq "true") { $padding = 10 } else { $padding = 13 }
             $btn.Width = $iconSize + $txtWidth + $padding
             if ($btn.Tag["AlignRight"] -eq "true") { $rightButtons.Add($btn) } else { $leftButtons.Add($btn) }
         }
     }
     # Overflow handling: proportionally shrink text buttons if total width exceeds panel width
-    $spacing=2
-    $panelWidth=$shortcutsPanel.ClientSize.Width
-    $buttonList=if ($leftButtons.Count-gt0 -and $rightButtons.Count-gt0) {$leftButtons+$rightButtons} elseif ($leftButtons.Count-gt0) {$leftButtons} elseif ($rightButtons.Count-gt0) {$rightButtons} else {@()}
-    if ($buttonList.Count) {$totalSpacing = if ($leftButtons.Count -gt 0 -and $rightButtons.Count -gt 0) {($buttonList.Count - 2) * $spacing} else {($buttonList.Count - 1) * $spacing}
+    $spacing = 2
+    $panelWidth = $shortcutsPanel.ClientSize.Width
+    $buttonList = if ($leftButtons.Count -gt 0 -and $rightButtons.Count -gt 0) {
+        $leftButtons + $rightButtons
+    } elseif ($leftButtons.Count -gt 0) {
+        $leftButtons
+    } elseif ($rightButtons.Count -gt 0) {
+        $rightButtons
+    } else {
+        @()
+    }
+    if ($buttonList.Count) {
+        $totalSpacing = if ($leftButtons.Count -gt 0 -and $rightButtons.Count -gt 0) {
+            ($buttonList.Count - 2) * $spacing
+        } else {
+            ($buttonList.Count - 1) * $spacing
+        }
         $fixed = 0; $var = @()
-        foreach ($btn in $buttonList) {if ($btn.Tag["ShowText"] -eq "true") {$var += $btn} else {$fixed += $btn.Width}}
+        foreach ($btn in $buttonList) {
+            if ($btn.Tag["ShowText"] -eq "true") { $var += $btn } else { $fixed += $btn.Width }
+        }
         $origVar = ($var | Measure-Object -Property Width -Sum).Sum
         if (($fixed + $origVar + $totalSpacing) -gt $panelWidth -and $origVar) {
             $scale = ($panelWidth - $fixed - $totalSpacing) / $origVar
-            foreach ($btn in $var) {$btn.Width = [Math]::Floor($btn.Width * $scale)}
+            foreach ($btn in $var) { $btn.Width = [Math]::Floor($btn.Width * $scale) }
         }
     }
-    $cs=$shortcutsPanel.ClientSize ; $leftX=0; $rightX=$cs.Width
-    foreach ($btn in $leftButtons) { $btn.Location=New-Object System.Drawing.Point($leftX, 0) ; $leftX += $btn.Width + $spacing }
+    $cs = $shortcutsPanel.ClientSize; $leftX = 0; $rightX = $cs.Width
+    foreach ($btn in $leftButtons) {
+        $btn.Location = New-Object System.Drawing.Point($leftX, 0)
+        $leftX += $btn.Width + $spacing
+    }
     $rightSorted = $rightButtons | Sort-Object { [int]$_.Tag.Order } -Descending
-    foreach ($btn in $rightSorted) { $rightX-=$btn.Width ; $btn.Location=New-Object System.Drawing.Point($rightX, 0) ; $rightX-=$spacing }
+    foreach ($btn in $rightSorted) {
+        $rightX -= $btn.Width
+        $btn.Location = New-Object System.Drawing.Point($rightX, 0)
+        $rightX -= $spacing
+    }
     $g.Dispose()
     Save-Settings
 }
 
-# --- Add a shortcut button ---
 function Add-ShortcutButton {
     param(
         [string]$FilePath,
@@ -339,116 +409,268 @@ function Add-ShortcutButton {
         [string]$DefDisplayName = ""
     )
 
-    if (-not (Test-Path -LiteralPath $FilePath)) { Write-Warning "File or folder '$FilePath' does not exist."; return }
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        Write-Warning "File or folder '$FilePath' does not exist."
+        return
+    }
+
     $isFolder = (Test-Path -LiteralPath $FilePath -PathType Container)
-    if (-not $isFolder) { $ext = [System.IO.Path]::GetExtension($FilePath).ToLower() } else { $ext = "" }
+    if (-not $isFolder) {
+        $ext = [System.IO.Path]::GetExtension($FilePath).ToLower()
+    } else {
+        $ext = ""
+    }
     $canOpenAsAdmin = $isFolder -or ($canRequireAdminExtensions -contains $ext)
     if (-not $canOpenAsAdmin) { $DefOpenAsAdmin = "false" }
-    $icon = $null; try { $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($FilePath) } catch { $icon = $null }
-    if (-not $icon) { try { $icon = [IconExtractor]::GetIcon($FilePath) } catch { } }
-    $img=$null;if($icon){try{$ms=New-Object System.IO.MemoryStream;$icon.ToBitmap().Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);$ms.Position=0;$bmp=New-Object System.Drawing.Bitmap($ms);$img=$bmp}catch{}}
-    $btn = New-Object System.Windows.Forms.Button ; $btn.TabStop = $false ; $btn.FlatStyle = 'Flat' ; $btn.FlatAppearance.BorderSize = 1 ; $btn.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::DarkCyan
+
+    $icon = $null
+    try { $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($FilePath) } catch { $icon = $null }
+    if (-not $icon) {
+        try { $icon = [IconExtractor]::GetIcon($FilePath) } catch { }
+    }
+    $img = $null
+    if ($icon) {
+        try {
+            $ms = New-Object System.IO.MemoryStream
+            $icon.ToBitmap().Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+            $ms.Position = 0
+            $bmp = New-Object System.Drawing.Bitmap($ms)
+            $img = $bmp
+        } catch { }
+    }
+
+    $btn = New-Object System.Windows.Forms.Button
+    $btn.TabStop = $false
+    $btn.FlatStyle = 'Flat'
+    $btn.FlatAppearance.BorderSize = 1
+    $btn.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::DarkCyan
     $displayName = if ($DefDisplayName -ne "") { $DefDisplayName } else { Split-Path $FilePath -Leaf }
-    $btn.Tag = @{ FilePath = $FilePath; OpenAsAdmin = $DefOpenAsAdmin; ShowText = $DefShowText; AlignRight = $DefAlignRight; DisplayName = $displayName; DragStart = $null }
-    if ($DefAlignRight -eq "true") {$group=$shortcutsPanel.Controls | Where-Object {$_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.ContainsKey("FilePath") -and $_.Tag["AlignRight"] -eq "true"}}
-    else {$group=$shortcutsPanel.Controls | Where-Object {$_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.ContainsKey("FilePath") -and $_.Tag["AlignRight"] -ne "true"}}
+    $btn.Tag = @{
+        FilePath                   = $FilePath;
+        OpenAsAdmin                = $DefOpenAsAdmin;
+        ShowText                   = $DefShowText;
+        AlignRight                 = $DefAlignRight;
+        DisplayName                = $displayName;
+        AdminAccessFailAlternative = $global:NewShortcutAdminAccessFailAlternative;
+        DragStart                  = $null
+    }
+    if ($DefAlignRight -eq "true") {
+        $group = $shortcutsPanel.Controls | Where-Object {
+            $_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.ContainsKey("FilePath") -and $_.Tag["AlignRight"] -eq "true"
+        }
+    } else {
+        $group = $shortcutsPanel.Controls | Where-Object {
+            $_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.ContainsKey("FilePath") -and $_.Tag["AlignRight"] -ne "true"
+        }
+    }
     $btn.Tag.Order = $group.Count
     if ($img) { $btn.Tag["OriginalImage"] = $img }
 
     $btn.Add_Click({
-        param($s,$e) ; $opts = $s.Tag
+        param($s, $e)
+        $opts = $s.Tag
         if ($opts["FilePath"] -and (Test-Path -LiteralPath $opts["FilePath"])) {
-            if ($opts["OpenAsAdmin"] -eq "true") {if (-not $script:AdminHelperStarted) { Start-AdminHelper } ; Invoke-AdminRun $opts["FilePath"]} 
-            else { Start-Process -FilePath $opts["FilePath"] }
+            if ($opts["OpenAsAdmin"] -eq "true") {
+                if (-not $script:AdminHelperStarted) { Start-AdminHelper }
+                if ($opts["AdminAccessFailAlternative"] -eq "Ask") {
+                    Invoke-AdminRun $opts["FilePath"]
+                } else {
+                    Invoke-AdminRun $opts["FilePath"] $opts["AdminAccessFailAlternative"]
+                }
+            } else {
+                Start-Process -FilePath $opts["FilePath"]
+            }
         }
     })
 
-    # Context menu (right-click)
+    # Create context menu and link the button in its Tag
     $ctxMenu = New-Object System.Windows.Forms.ContextMenuStrip
+    $ctxMenu.Tag = $btn
 
     $miRemove = New-Object System.Windows.Forms.ToolStripMenuItem("Remove")
     $miRemove.Add_Click({
-        param($s,$e)
-        $btn = $s.GetCurrentParent().SourceControl -as [System.Windows.Forms.Button]
-        if ($btn) { $form.SuspendLayout(); $shortcutsPanel.Controls.Remove($btn); Save-Shortcuts; Update-Layout; $form.ResumeLayout() }
+        param($s, $e)
+        $localBtn = $s.Owner.Tag
+        $form.SuspendLayout()
+        $shortcutsPanel.Controls.Remove($localBtn)
+        Save-Shortcuts
+        Update-Layout
+        $form.ResumeLayout()
     })
 
     $miRename = New-Object System.Windows.Forms.ToolStripMenuItem("Rename")
     $miRename.Add_Click({
-        param($s,$e)
-        $btn = $s.GetCurrentParent().SourceControl -as [System.Windows.Forms.Button]
-        if ($btn) {
-            $currentName = $btn.Tag["DisplayName"]
-            $frm = New-Object System.Windows.Forms.Form
-            $frm.Text = "Rename Shortcut"; $frm.Size = New-Object System.Drawing.Size(300,150); $frm.StartPosition = 'CenterScreen'
-            $lbl = New-Object System.Windows.Forms.Label; $lbl.Text = "New Name:"; $lbl.Location = New-Object System.Drawing.Point(10,20); $lbl.AutoSize = $true; $frm.Controls.Add($lbl)
-            $txt = New-Object System.Windows.Forms.TextBox; $txt.Text = $currentName; $txt.Location = New-Object System.Drawing.Point(80,18); $txt.Width = 180; $frm.Controls.Add($txt)
-            $btnOK = New-Object System.Windows.Forms.Button; $btnOK.Text = "OK"; $btnOK.Location = New-Object System.Drawing.Point(100,60)
-            $btnOK.Add_Click({ $frm.Tag = $txt.Text; $frm.DialogResult = [System.Windows.Forms.DialogResult]::OK; $frm.Close() })
-            $frm.Controls.Add($btnOK); $frm.AcceptButton = $btnOK
-            if ($frm.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-                $form.SuspendLayout()
-                $newName = $frm.Tag
-                if ($newName.Trim() -ne "") {
-                    $btn.Tag["DisplayName"] = $newName.Trim()
-                    if ($btn.Tag["ShowText"] -eq "true") { $btn.Text = " " + $newName.Trim() }
-                    Save-Shortcuts; Update-Layout
-                    $form.ResumeLayout()
+        param($s, $e)
+        $localBtn = $s.Owner.Tag
+        $currentName = $localBtn.Tag["DisplayName"]
+        $frm = New-Object System.Windows.Forms.Form
+        $frm.Text = "Rename Shortcut"
+        $frm.Size = New-Object System.Drawing.Size(300,150)
+        $frm.StartPosition = 'CenterScreen'
+        $lbl = New-Object System.Windows.Forms.Label
+        $lbl.Text = "New Name:"
+        $lbl.Location = New-Object System.Drawing.Point(10,20)
+        $lbl.AutoSize = $true
+        $frm.Controls.Add($lbl)
+        $txt = New-Object System.Windows.Forms.TextBox
+        $txt.Text = $currentName
+        $txt.Location = New-Object System.Drawing.Point(80,18)
+        $txt.Width = 180
+        $frm.Controls.Add($txt)
+        $btnOK = New-Object System.Windows.Forms.Button
+        $btnOK.Text = "OK"
+        $btnOK.Location = New-Object System.Drawing.Point(100,60)
+        $btnOK.Add_Click({
+            $frm.Tag = $txt.Text
+            $frm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $frm.Close()
+        })
+        $frm.Controls.Add($btnOK)
+        $frm.AcceptButton = $btnOK
+        if ($frm.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $form.SuspendLayout()
+            $newName = $frm.Tag
+            if ($newName.Trim() -ne "") {
+                $localBtn.Tag["DisplayName"] = $newName.Trim()
+                if ($localBtn.Tag["ShowText"] -eq "true") { 
+                    $localBtn.Text = " " + $newName.Trim() 
                 }
+                Save-Shortcuts
+                Update-Layout
+                $form.ResumeLayout()
             }
-            $frm.Dispose()
         }
+        $frm.Dispose()
     })
 
+    # Create dropdown "If admin access fail" with composite tags
+    $miAdminFailAlternative = New-Object System.Windows.Forms.ToolStripMenuItem "If admin access fail"
+    
+    $miAsk = New-Object System.Windows.Forms.ToolStripMenuItem "Ask"
+    $miAsk.CheckOnClick = $true
+    $miAsk.Tag = @{ Value = "Ask"; Button = $btn }
+    
+    $miLocalCopy = New-Object System.Windows.Forms.ToolStripMenuItem "Local Copy"
+    $miLocalCopy.CheckOnClick = $true
+    $miLocalCopy.Tag = @{ Value = "LocalCopy"; Button = $btn }
+    
+    $miRunAsUser = New-Object System.Windows.Forms.ToolStripMenuItem "Run as User"
+    $miRunAsUser.CheckOnClick = $true
+    $miRunAsUser.Tag = @{ Value = "AsUser"; Button = $btn }
+    
+    $miCancel = New-Object System.Windows.Forms.ToolStripMenuItem "Cancel"
+    $miCancel.CheckOnClick = $true
+    $miCancel.Tag = @{ Value = "Cancel"; Button = $btn }
+    
+    $dropdownHandler = {
+        param($sender, $e)
+        $sender.Checked = $true
+        $parent = $sender.Owner
+        $index = $parent.Items.IndexOf($sender)
+        for ($i = 0; $i -lt $parent.Items.Count; $i++) {
+            if ($i -ne $index) { $parent.Items[$i].Checked = $false }
+        }
+        $menuData = $sender.Tag
+        if ($menuData -and $menuData.ContainsKey("Button")) {
+            $btnLocal = $menuData.Button
+            $btnLocal.Tag["AdminAccessFailAlternative"] = $menuData.Value
+        }
+        Save-Shortcuts
+    }
+    
+    $miAsk.Add_Click($dropdownHandler)
+    $miLocalCopy.Add_Click($dropdownHandler)
+    $miRunAsUser.Add_Click($dropdownHandler)
+    $miCancel.Add_Click($dropdownHandler)
+    
+    switch ($btn.Tag["AdminAccessFailAlternative"]) {
+        "Ask"       { $miAsk.Checked = $true }
+        "LocalCopy" { $miLocalCopy.Checked = $true }
+        "AsUser"    { $miRunAsUser.Checked = $true }
+        "Cancel"    { $miCancel.Checked = $true }
+        default     { $miAsk.Checked = $true; $btn.Tag["AdminAccessFailAlternative"] = "Ask" }
+    }
+    $miAdminFailAlternative.DropDownItems.AddRange(@($miAsk, $miLocalCopy, $miRunAsUser, $miCancel))
+    
     $miOpenAdmin = New-Object System.Windows.Forms.ToolStripMenuItem("Open as admin")
     $miOpenAdmin.CheckOnClick = $true
     $miOpenAdmin.Checked = ($DefOpenAsAdmin -eq "true")
-    if (-not $canOpenAsAdmin) { $miOpenAdmin.Enabled = $false }
-    else {
+    $miOpenAdmin.Tag = @{ Value = "OpenAsAdmin"; Button = $btn }
+    if (-not $canOpenAsAdmin) {
+        $miOpenAdmin.Enabled = $false
+    } else {
         $miOpenAdmin.Add_Click({
             param($s, $e)
-            $btn = $s.GetCurrentParent().SourceControl -as [System.Windows.Forms.Button]
-            $btn.Tag["OpenAsAdmin"] = if ($s.Checked) { "true" } else { "false" }
+            $comp = $s.Tag
+            if ($comp -and $comp.ContainsKey("Button")) {
+                $btnLocal = $comp.Button
+                $btnLocal.Tag["OpenAsAdmin"] = if ($s.Checked) { "true" } else { "false" }
+            }
             Save-Shortcuts
+            $owner = $s.Owner
+            if ($owner -and $owner.Items) {
+                $adminFailItem = $owner.Items | Where-Object { $_.Text -eq "If admin access fail" }
+                if ($adminFailItem -ne $null) {
+                    $adminFailItem.Enabled = $s.Checked
+                }
+            }
         })
     }
-
+    
     $miShowText = New-Object System.Windows.Forms.ToolStripMenuItem("Show text")
     $miShowText.CheckOnClick = $true
     $miShowText.Checked = ($btn.Tag["ShowText"] -eq "true")
     $miShowText.Add_Click({
-        param($s,$e)
-        $btn = $s.GetCurrentParent().SourceControl -as [System.Windows.Forms.Button]
-        $btn.Tag["ShowText"] = if ($s.Checked) { "true" } else { "false" }
-        $form.SuspendLayout(); Save-Shortcuts; Update-Layout; $form.ResumeLayout()
+        param($s, $e)
+        $localBtn = $s.Owner.Tag
+        if ($localBtn) {
+            $localBtn.Tag["ShowText"] = if ($s.Checked) { "true" } else { "false" }
+            $form.SuspendLayout()
+            Save-Shortcuts
+            Update-Layout
+            $form.ResumeLayout()
+        }
     })
-
+    
     $miAlignRight = New-Object System.Windows.Forms.ToolStripMenuItem("Align right")
     $miAlignRight.CheckOnClick = $true
     if ($DefAlignRight -eq "true") { $miAlignRight.Checked = $true }
     $miAlignRight.Add_Click({
-        param($s,$e)
-        $btn = $s.GetCurrentParent().SourceControl -as [System.Windows.Forms.Button]
-        $btn.Tag["AlignRight"] = if ($s.Checked) { "true" } else { "false" }
-        $form.SuspendLayout(); Save-Shortcuts; Update-Layout; $form.ResumeLayout()
-    })
-
-    $ctxMenu.Items.AddRange(@($miRemove, $miRename, $miOpenAdmin, $miShowText, $miAlignRight))
-    $btn.ContextMenuStrip = $ctxMenu
-
-    # Events
-    $btn.Add_MouseDown({ param($s,$e) $s.Tag["DragStart"] = $e.Location })
-    $btn.Add_MouseMove({
-        param($s,$e)
-        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $s.Tag["DragStart"]) {
-            $start = $s.Tag["DragStart"] ; $deltaX = [Math]::Abs($e.Location.X - $start.X) ; $deltaY = [Math]::Abs($e.Location.Y - $start.Y)
-            if ($deltaX -gt 5 -or $deltaY -gt 5) { $s.DoDragDrop($s, [System.Windows.Forms.DragDropEffects]::Move) }
+        param($s, $e)
+        $localBtn = $s.Owner.Tag
+        if ($localBtn) {
+            $localBtn.Tag["AlignRight"] = if ($s.Checked) { "true" } else { "false" }
+            $form.SuspendLayout()
+            Save-Shortcuts
+            Update-Layout
+            $form.ResumeLayout()
         }
     })
-    $btn.Add_MouseLeave({ param($s,$e) ; $tooltip.Hide($s) })
-
+    
+    $miAdminFailAlternative.Enabled = $miOpenAdmin.Checked
+    $ctxMenu.Items.AddRange(@($miRemove, $miRename, $miShowText, $miAlignRight, $miOpenAdmin, $miAdminFailAlternative))
+    $btn.ContextMenuStrip = $ctxMenu
+    
+    $btn.Add_MouseDown({ param($s, $e) $s.Tag["DragStart"] = $e.Location })
+    $btn.Add_MouseMove({
+        param($s, $e)
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $s.Tag["DragStart"]) {
+            $start = $s.Tag["DragStart"]
+            $deltaX = [Math]::Abs($e.Location.X - $start.X)
+            $deltaY = [Math]::Abs($e.Location.Y - $start.Y)
+            if ($deltaX -gt 5 -or $deltaY -gt 5) {
+                $s.DoDragDrop($s, [System.Windows.Forms.DragDropEffects]::Move)
+            }
+        }
+    })
+    $btn.Add_MouseLeave({ param($s, $e) ; $tooltip.Hide($s) })
+    
     $shortcutsPanel.Controls.Add($btn)
 }
+
+
+
+
 
 function Import-Shortcuts {
     param([string]$FilePath)
@@ -465,11 +687,16 @@ function Import-Shortcuts {
     } else { $choice = [System.Windows.Forms.DialogResult]::No }
     $form.SuspendLayout()
     $importData = Read-IniFile $FilePath
-    if ($choice -eq [System.Windows.Forms.DialogResult]::No) { $shortcutsPanel.Controls.Clear() ; $existing = $importData } 
-    else {
+    if ($choice -eq [System.Windows.Forms.DialogResult]::No) {
+        $shortcutsPanel.Controls.Clear()
+        $existing = $importData
+    } else {
         $existing = if (Test-Path -LiteralPath $shortcutsFile) { Read-IniFile $shortcutsFile } else { @{} }
         $index = $existing.Keys.Count
-        foreach ($section in $importData.Keys) { $existing["Shortcut$index"] = $importData[$section] ; $index++ }
+        foreach ($section in $importData.Keys) {
+            $existing["Shortcut$index"] = $importData[$section]
+            $index++
+        }
     }
     $allButtons = $shortcutsPanel.Controls | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.FilePath }
     $lookup = @{}
@@ -483,15 +710,22 @@ function Import-Shortcuts {
                     $button = $lookup[$entry.Path]
                     if (-not ($buttonsToBlink | Where-Object { $_.Button -eq $button })) { $buttonsToBlink += [PSCustomObject]@{ Button=$button ; OriginalColor=$button.BackColor } }
                 }
-            } else { Add-ShortcutButton -FilePath $entry.Path -NoSave -DefOpenAsAdmin $entry.OpenAsAdmin -DefShowText $entry.ShowText -DefAlignRight $entry.AlignRight -DefDisplayName $entry.DisplayName }
+            } else {
+                Add-ShortcutButton -FilePath $entry.Path -NoSave -DefOpenAsAdmin $entry.OpenAsAdmin -DefShowText $entry.ShowText -DefAlignRight $entry.AlignRight -DefDisplayName $entry.DisplayName
+            }
         }
     }
     Update-Layout
     $form.ResumeLayout()
     if ($argSilentImport -ne "/f" -and $buttonsToBlink.Count -gt 0) {
         for ($i = 1; $i -le 6; $i++) {
-            foreach ($item in $buttonsToBlink) { $btn = $item.Button ; $orig = $item.OriginalColor ; $btn.BackColor = if($btn.BackColor -eq 'Orange') { $orig } else { 'Orange' } }
-            [System.Windows.Forms.Application]::DoEvents() ; Start-Sleep -Milliseconds 300
+            foreach ($item in $buttonsToBlink) {
+                $btn = $item.Button
+                $orig = $item.OriginalColor
+                $btn.BackColor = if($btn.BackColor -eq 'Orange') { $orig } else { 'Orange' }
+            }
+            [System.Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 300
         }
         foreach ($item in $buttonsToBlink) { $item.Button.BackColor = $item.OriginalColor }
     }
@@ -504,7 +738,6 @@ function Export-Shortcuts {
     if ($sfd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Copy-Item -Path $shortcutsFile -Destination $sfd.FileName -Force }
 }
 
-# --- Options window ---
 $settingsButton.Add_Click({
     $ctx = New-Object System.Windows.Forms.ContextMenuStrip
     $itmSettings = New-Object System.Windows.Forms.ToolStripMenuItem("Settings")
@@ -518,12 +751,14 @@ $settingsButton.Add_Click({
     $ctx.Show($settingsButton, $pt)
 })
 
+# --- Options window ---
 function Show-OptionsWindow {
     $optForm = New-Object System.Windows.Forms.Form
     $optForm.SuspendLayout()
 
     $optForm.Text = "Options"
-    $optForm.ClientSize = New-Object System.Drawing.Size(280,230)
+    # Increase height to accommodate new admin access fail option controls
+    $optForm.ClientSize = New-Object System.Drawing.Size(280,300)
     $optForm.StartPosition = 'CenterScreen'
     
     $gbLoc = New-Object System.Windows.Forms.GroupBox
@@ -547,7 +782,11 @@ function Show-OptionsWindow {
     $rSmall = New-Object System.Windows.Forms.RadioButton; $rSmall.Text = "Small"; $rSmall.Location = New-Object System.Drawing.Point(10,20)
     $rMedium = New-Object System.Windows.Forms.RadioButton; $rMedium.Text = "Medium"; $rMedium.Location = New-Object System.Drawing.Point(10,45)
     $rLarge = New-Object System.Windows.Forms.RadioButton; $rLarge.Text = "Large"; $rLarge.Location = New-Object System.Drawing.Point(10,70)
-    switch ($global:ThicknessMode) { "Small" {$rSmall.Checked=$true} ; "Medium" {$rMedium.Checked=$true} ; "Large" {$rLarge.Checked=$true} }
+    switch ($global:ThicknessMode) {
+        "Small" { $rSmall.Checked = $true }
+        "Medium" { $rMedium.Checked = $true }
+        "Large" { $rLarge.Checked = $true }
+    }
     $gbThick.Controls.AddRange(@($rSmall, $rMedium, $rLarge))
     $optForm.Controls.Add($gbThick)
 
@@ -561,17 +800,35 @@ function Show-OptionsWindow {
     $gbTheme.Controls.AddRange(@($rLight, $rDark))
     $optForm.Controls.Add($gbTheme)
 
-    $lblNew = New-Object System.Windows.Forms.Label; $lblNew.Text = "New shortcuts:"; $lblNew.Location = New-Object System.Drawing.Point(150,120)
+    $lblNew = New-Object System.Windows.Forms.Label; $lblNew.Text = "New shortcuts:"; $lblNew.Location = New-Object System.Drawing.Point(150,150)
     $optForm.Controls.Add($lblNew)
-    $cbShowText = New-Object System.Windows.Forms.CheckBox; $cbShowText.Text = "Show text"; $cbShowText.Location = New-Object System.Drawing.Point(150,145)
+    $cbShowText = New-Object System.Windows.Forms.CheckBox; $cbShowText.Text = "Show text"; $cbShowText.Location = New-Object System.Drawing.Point(150,175)
     $cbShowText.Checked = ($global:NewShortcutShowText -eq "true")
     $optForm.Controls.Add($cbShowText)
-    $cbOpenAdmin = New-Object System.Windows.Forms.CheckBox; $cbOpenAdmin.Text = "As admin"; $cbOpenAdmin.Location = New-Object System.Drawing.Point(150,169)
+    $cbOpenAdmin = New-Object System.Windows.Forms.CheckBox; $cbOpenAdmin.Text = "As admin"; $cbOpenAdmin.Location = New-Object System.Drawing.Point(150,195)
     $cbOpenAdmin.Checked = ($global:NewShortcutOpenAsAdmin -eq "true")
     $optForm.Controls.Add($cbOpenAdmin)
-    $cbAlignRight = New-Object System.Windows.Forms.CheckBox; $cbAlignRight.Text = "Align right"; $cbAlignRight.Location = New-Object System.Drawing.Point(150,193)
+    $cbAlignRight = New-Object System.Windows.Forms.CheckBox; $cbAlignRight.Text = "Align right"; $cbAlignRight.Location = New-Object System.Drawing.Point(150,215)
     $cbAlignRight.Checked = ($global:NewShortcutAlignRight -eq "true")
     $optForm.Controls.Add($cbAlignRight)
+    
+    # New group box for default admin access fail alternative for new shortcuts
+    $gbAdminFail = New-Object System.Windows.Forms.GroupBox
+    $gbAdminFail.Text = "If admin access fail"
+    $gbAdminFail.Location = New-Object System.Drawing.Point(150,245)
+    $gbAdminFail.Size = New-Object System.Drawing.Size(120,100)
+    $rAsk = New-Object System.Windows.Forms.RadioButton; $rAsk.Text = "Ask"; $rAsk.Location = New-Object System.Drawing.Point(10,20)
+    $rLocalCopy = New-Object System.Windows.Forms.RadioButton; $rLocalCopy.Text = "Local Copy"; $rLocalCopy.Location = New-Object System.Drawing.Point(10,40)
+    $rRunAsUser = New-Object System.Windows.Forms.RadioButton; $rRunAsUser.Text = "Run as User"; $rRunAsUser.Location = New-Object System.Drawing.Point(10,60)
+    $rCancel = New-Object System.Windows.Forms.RadioButton; $rCancel.Text = "Cancel"; $rCancel.Location = New-Object System.Drawing.Point(10,80)
+    switch ($global:NewShortcutAdminAccessFailAlternative) {
+        "Ask"       { $rAsk.Checked = $true }
+        "LocalCopy" { $rLocalCopy.Checked = $true }
+        "AsUser"    { $rRunAsUser.Checked = $true }
+        "Cancel"    { $rCancel.Checked = $true }
+    }
+    $gbAdminFail.Controls.AddRange(@($rAsk, $rLocalCopy, $rRunAsUser, $rCancel))
+    $optForm.Controls.Add($gbAdminFail)
 
     $btnImport = New-Object System.Windows.Forms.Button; $btnImport.Text = "Import shortcuts"; $btnImport.Location = New-Object System.Drawing.Point(10,155); $btnImport.Size = New-Object System.Drawing.Size(120,30)
     $btnImport.Add_Click({ Import-Shortcuts })
@@ -590,13 +847,17 @@ function Show-OptionsWindow {
     $cbShowText.Add_CheckedChanged({ $global:NewShortcutShowText = if ($cbShowText.Checked) { "true" } else { "false" } ; Save-Settings })
     $cbOpenAdmin.Add_CheckedChanged({ $global:NewShortcutOpenAsAdmin = if ($cbOpenAdmin.Checked) { "true" } else { "false" } ; Save-Settings })
     $cbAlignRight.Add_CheckedChanged({ $global:NewShortcutAlignRight = if ($cbAlignRight.Checked) { "true" } else { "false" } ; Save-Settings })
+    $rAsk.Add_CheckedChanged({ if ($rAsk.Checked) { $global:NewShortcutAdminAccessFailAlternative = "Ask"; Save-Settings } })
+    $rLocalCopy.Add_CheckedChanged({ if ($rLocalCopy.Checked) { $global:NewShortcutAdminAccessFailAlternative = "LocalCopy"; Save-Settings } })
+    $rRunAsUser.Add_CheckedChanged({ if ($rRunAsUser.Checked) { $global:NewShortcutAdminAccessFailAlternative = "AsUser"; Save-Settings } })
+    $rCancel.Add_CheckedChanged({ if ($rCancel.Checked) { $global:NewShortcutAdminAccessFailAlternative = "Cancel"; Save-Settings } })
 
     $optForm.ResumeLayout()
     $optForm.ShowDialog() | Out-Null
     $optForm.Dispose()
 }
 
-# --- TEST-PATHACESS (NOUVELLE FONCTION) ---
+# --- TEST-PATHACESS (NEW FUNCTION) ---
 function Test-PathAcess {
     param([string]$Path)
     try {
@@ -611,7 +872,7 @@ function Test-PathAcess {
 # --- ADMIN HELPER ---
 function Start-AdminHelper {
     if ($script:AdminHelperStarted) { return }
-    # On récupère le SID de l'utilisateur standard
+    # Get the SID of the standard user
     $script:StandardUserSID = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 
     $helperScript = @"
@@ -629,7 +890,7 @@ function Test-PathAcess {
 `$pipeName = 'PSAdminHelperPipe'
 while (`$true) {
     try {
-        # Configuration de la sécurité du pipe
+        # Configure pipe security
         `$ps = New-Object System.IO.Pipes.PipeSecurity
         `$elevatedSID = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
         `$ps.AddAccessRule((New-Object System.IO.Pipes.PipeAccessRule(`$elevatedSID, [System.IO.Pipes.PipeAccessRights]::ReadWrite, [System.Security.AccessControl.AccessControlType]::Allow)))
@@ -637,11 +898,11 @@ while (`$true) {
         `$ps.AddAccessRule((New-Object System.IO.Pipes.PipeAccessRule(`$stdSID, [System.IO.Pipes.PipeAccessRights]::ReadWrite, [System.Security.AccessControl.AccessControlType]::Allow)))
         `$pipeStream = New-Object System.IO.Pipes.NamedPipeServerStream(`$pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 1024, 1024, `$ps)
         `$pipeStream.WaitForConnection()
-        # Lecture du message envoyé par le client
+        # Read the command sent by the client
         `$reader = New-Object System.IO.StreamReader(`$pipeStream)
         `$cmd = `$reader.ReadLine()
         if (`$cmd) {
-            try   { `$output = (Invoke-Expression `$cmd) }
+            try { `$output = (Invoke-Expression `$cmd) }
             catch { `$output = '[Pipeline Error] ' + `$(`$_.Exception.Message) }
             `$writer = New-Object System.IO.StreamWriter(`$pipeStream)
             `$writer.AutoFlush = `$true
@@ -681,9 +942,13 @@ while (`$true) {
 
 # --- ADMIN RUN ---
 function Invoke-AdminRun {
-    param([string]$filePath)
+    param(
+        [string]$filePath,
+        [ValidateSet("LocalCopy", "AsUser", "Cancel")][string]$adminAccessFailAlternative
+    )
     Log "filePath input is $filePath"
-    # Fonction locale pour envoyer une commande au helper via le pipe
+    
+    # Local function to send a command to the helper via the pipe
     function Send-AdminCommand {
         param([string]$command)
         try {
@@ -704,7 +969,7 @@ function Invoke-AdminRun {
         }
     }
     
-    # Résolution des raccourcis
+    # Resolve shortcuts
     if ($filePath -match "\.lnk$") {
         $wsh = New-Object -ComObject WScript.Shell
         $shortcut = $wsh.CreateShortcut($filePath)
@@ -718,16 +983,16 @@ function Invoke-AdminRun {
         $workDir = ""
     }
     
-    # Test d'accès admin à la cible
+    # Test admin access to the target
     $testAdmin_target = Send-AdminCommand "if (Test-PathAcess '$target') { Write-Output OK }"
     if ($testAdmin_target -eq "OK") {
         Log "Admin can read target"
         $cmd = "Start-Process -FilePath '$target'"
         if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
-        if ($workDir) { 
+        if ($workDir) {
             $testAdmin_workingDir = Send-AdminCommand "if (Test-PathAcess '$workDir') { Write-Output OK }"
-            if ($testAdmin_workingDir -eq "OK") { $cmd += " -WorkingDirectory '$workDir'" } 
-            else { 
+            if ($testAdmin_workingDir -eq "OK") { $cmd += " -WorkingDirectory '$workDir'" }
+            else {
                 Log "Admin cannot access workingDirectory '$workDir', fallback to target folder."
                 $cmd += " -WorkingDirectory '$(Split-Path $target)'"
             }
@@ -736,147 +1001,203 @@ function Invoke-AdminRun {
     }
     else {
         Log "Admin cannot read target"
-        if (-not (Test-PathAcess $target)) { Log "User cannot read target too, cancelling." ; return }
+        if (-not (Test-PathAcess $target)) { Log "User cannot read target either, cancelling." ; return }
         $item = Get-Item $target -ErrorAction SilentlyContinue
         if (-not $item) { Log "Cannot get item" ; return }
-        $size = $item.Length ; $sizeMB = [math]::Round($size / 1MB, 2)
-        $msg = "$(if ($item.PSIsContainer) { 'Folder' } else { 'File' }) not readable as Admin`nLocal copy before run as admin?`nSize: $sizeMB MB"
-
-        $chooseForm = New-Object System.Windows.Forms.Form ; $chooseForm.Text = "Admin Run" ; $chooseForm.Size = New-Object System.Drawing.Size(500,250) ; $chooseForm.StartPosition = "CenterScreen"
-        $label=New-Object System.Windows.Forms.Label ; $label.Text=$msg ; $label.Location=New-Object System.Drawing.Point(10,10) ; $label.Size=New-Object System.Drawing.Size(480,100) ; $label.AutoSize=$false
-        $buttonAdmin=New-Object System.Windows.Forms.Button ; $buttonAdmin.Text="Local copy, then run as admin" ; $buttonAdmin.Size=New-Object System.Drawing.Size(140,30) ; $buttonAdmin.Location=New-Object System.Drawing.Point(10,150)
-        $buttonUser=New-Object System.Windows.Forms.Button ; $buttonUser.Text="Run as user" ; $buttonUser.Size=New-Object System.Drawing.Size(140,30) ; $buttonUser.Location=New-Object System.Drawing.Point(170,150)
-        $buttonCancel=New-Object System.Windows.Forms.Button ; $buttonCancel.Text="Cancel" ; $buttonCancel.Size=New-Object System.Drawing.Size(140,30) ; $buttonCancel.Location=New-Object System.Drawing.Point(330,150)
-        $chooseForm.Controls.Add($label) ; $chooseForm.Controls.Add($buttonAdmin) ; $chooseForm.Controls.Add($buttonUser) ; $chooseForm.Controls.Add($buttonCancel)
-        $buttonAdmin.DialogResult = [System.Windows.Forms.DialogResult]::Yes ; $buttonCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel ; $buttonUser.DialogResult = [System.Windows.Forms.DialogResult]::Ignore
-        $chooseForm.AcceptButton = $buttonAdmin ; $chooseForm.CancelButton = $buttonCancel
-        $result = $chooseForm.ShowDialog()
+        $size = $item.Length; $sizeMB = [math]::Round($size / 1MB, 2)
+        $msg = "$(if ($item.PSIsContainer) { 'Folder' } else { 'File' }) not readable as Admin`nLocal copy before running as admin?`nSize: $sizeMB MB"
         
-        if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
-            # Option : Local copy, then run as admin
-            $temp = Join-Path $env:TEMP (if ($item.PSIsContainer) { $item.Name } else { $item.BaseName + $item.Extension })
-            Log "Copying large file to temp: $temp"
-            Copy-Item -Path $target -Destination $temp -ErrorAction Stop
-            $cmd = "Start-Process -FilePath '$temp'"
-            if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
-            if ($workDir) {
-                $testAdmin_workingDir = Send-AdminCommand "if (Test-PathAcess '$workDir') { Write-Output OK }"
-                if ($testAdmin_workingDir -eq "OK") { $cmd += " -WorkingDirectory '$workDir'" }
-                else { 
-                    Log "admin cannot access workingDirectory '$workDir', fallback to target folder."
-                    $cmd += " -WorkingDirectory '$(Split-Path $target)'"
-                }
-            }
-            Send-AdminCommand $cmd
+        # If no alternative specified, prompt the user
+        if (-not $adminAccessFailAlternative) {
+            $chooseForm = New-Object System.Windows.Forms.Form
+            $chooseForm.Text = "Admin Run"
+            $chooseForm.Size = New-Object System.Drawing.Size(500,250)
+            $chooseForm.StartPosition = "CenterScreen"
+            $label = New-Object System.Windows.Forms.Label
+            $label.Text = $msg
+            $label.Location = New-Object System.Drawing.Point(10,10)
+            $label.Size = New-Object System.Drawing.Size(480,100)
+            $label.AutoSize = $false
+            $buttonAdmin = New-Object System.Windows.Forms.Button
+            $buttonAdmin.Text = "Local copy, then run as admin"
+            $buttonAdmin.Size = New-Object System.Drawing.Size(140,30)
+            $buttonAdmin.Location = New-Object System.Drawing.Point(10,150)
+            $buttonUser = New-Object System.Windows.Forms.Button
+            $buttonUser.Text = "Run as user"
+            $buttonUser.Size = New-Object System.Drawing.Size(140,30)
+            $buttonUser.Location = New-Object System.Drawing.Point(170,150)
+            $buttonCancel = New-Object System.Windows.Forms.Button
+            $buttonCancel.Text = "Cancel"
+            $buttonCancel.Size = New-Object System.Drawing.Size(140,30)
+            $buttonCancel.Location = New-Object System.Drawing.Point(330,150)
+            $chooseForm.Controls.Add($label)
+            $chooseForm.Controls.Add($buttonAdmin)
+            $chooseForm.Controls.Add($buttonUser)
+            $chooseForm.Controls.Add($buttonCancel)
+            $buttonAdmin.DialogResult = [System.Windows.Forms.DialogResult]::Yes
+            $buttonUser.DialogResult = [System.Windows.Forms.DialogResult]::Ignore
+            $buttonCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+            $chooseForm.AcceptButton = $buttonAdmin
+            $chooseForm.CancelButton = $buttonCancel
+            $result = $chooseForm.ShowDialog()
+            
+            if ($result -eq [System.Windows.Forms.DialogResult]::Yes) { $adminAccessFailAlternative = "LocalCopy" }
+            elseif ($result -eq [System.Windows.Forms.DialogResult]::Ignore) { $adminAccessFailAlternative = "AsUser" }
+            else { $adminAccessFailAlternative = "Cancel" }
         }
-        elseif ($result -eq [System.Windows.Forms.DialogResult]::Ignore) {
-            # Option : Run as user
-            $cmd = "Start-Process -FilePath '$target'"
-            if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
-            if ($workDir) {
-                if (Test-PathAcess $workDir) { $cmd += " -WorkingDirectory '$workDir'" }
-                else { 
-                    Log "User cannot access workingDirectory '$workDir', fallback to target folder."
-                    $cmd += " -WorkingDirectory '$(Split-Path $target)'"
+        
+        switch ($adminAccessFailAlternative) {
+            "LocalCopy" {
+                # Option: Local copy, then run as admin
+                $temp = Join-Path $env:TEMP (if ($item.PSIsContainer) { $item.Name } else { $item.BaseName + $item.Extension })
+                Log "Copying file to temp: $temp"
+                Copy-Item -Path $target -Destination $temp -ErrorAction Stop
+                $cmd = "Start-Process -FilePath '$temp'"
+                if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
+                if ($workDir) {
+                    $testAdmin_workingDir = Send-AdminCommand "if (Test-PathAcess '$workDir') { Write-Output OK }"
+                    if ($testAdmin_workingDir -eq "OK") { $cmd += " -WorkingDirectory '$workDir'" }
+                    else {
+                        Log "Admin cannot access workingDirectory '$workDir', fallback to target folder."
+                        $cmd += " -WorkingDirectory '$(Split-Path $target)'"
+                    }
                 }
+                Send-AdminCommand $cmd
             }
-            Invoke-Expression $cmd
+            "AsUser" {
+                # Option: Run as user
+                $cmd = "Start-Process -FilePath '$target'"
+                if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
+                if ($workDir) {
+                    if (Test-PathAcess $workDir) { $cmd += " -WorkingDirectory '$workDir'" }
+                    else {
+                        Log "User cannot access workingDirectory '$workDir', fallback to target folder."
+                        $cmd += " -WorkingDirectory '$(Split-Path $target)'"
+                    }
+                }
+                Invoke-Expression $cmd
+            }
+            "Cancel" {
+                Log "adminAccessFailAlternative = Cancel"
+                return
+            }
         }
-        else { Log "User cancelled run" ; return }
     }
 }
 
-
-# --- Events ---
+# --- Events for drag/drop and layout reordering ---
 $shortcutsPanel.Add_DragEnter({
     param($s, $e)
-    if ($e.Data.GetDataPresent([System.Windows.Forms.Button])) {$e.Effect = [System.Windows.Forms.DragDropEffects]::Move ; $dragIndicator.Visible=$true}
-    elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {$e.Effect = [System.Windows.Forms.DragDropEffects]::Copy}
+    if ($e.Data.GetDataPresent([System.Windows.Forms.Button])) {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::Move
+        $dragIndicator.Visible = $true
+    }
+    elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy
+    }
     else { $e.Effect = [System.Windows.Forms.DragDropEffects]::None }
 })
 
 $shortcutsPanel.Add_DragOver({
     param($s, $e)
     function Get-IndicatorX($mouseX, $isRightGroup) {
-        $alignedButtons=@($shortcutsPanel.Controls|Where-Object{$_-is[System.Windows.Forms.Button]-and$_.Tag-and$_.Tag.ContainsKey("FilePath")-and(($_.Tag["AlignRight"]-eq"true")-eq$isRightGroup)})
-        if ($alignedButtons.Count -eq 0) { if ($isRightGroup) {return ($shortcutsPanel.ClientSize.Width - $dragIndicator.Width)} else {return 0} } 
-        else {
-            $closestButton = $null ; $minDistance = [int]::MaxValue
-            foreach ($btn in $alignedButtons) {$distance = [Math]::Abs($mouseX - ($btn.Left + $btn.Width / 2)) ; if ($distance -lt $minDistance) { $minDistance=$distance ; $closestButton=$btn}}
-            if ($mouseX -lt ($closestButton.Left+$closestButton.Width/2)) {return [int]($closestButton.Left-$dragIndicator.Width+2)} else {return [int]($closestButton.Left+$closestButton.Width-1)}
+        $alignedButtons = @($shortcutsPanel.Controls | Where-Object {
+            $_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.ContainsKey("FilePath") -and (($_.Tag["AlignRight"] -eq "true") -eq $isRightGroup)
+        })
+        if ($alignedButtons.Count -eq 0) {
+            if ($isRightGroup) { return ($shortcutsPanel.ClientSize.Width - $dragIndicator.Width) }
+            else { return 0 }
+        } else {
+            $closestButton = $null; $minDistance = [int]::MaxValue
+            foreach ($btn in $alignedButtons) {
+                $distance = [Math]::Abs($mouseX - ($btn.Left + $btn.Width / 2))
+                if ($distance -lt $minDistance) { $minDistance = $distance; $closestButton = $btn }
+            }
+            if ($mouseX -lt ($closestButton.Left + $closestButton.Width/2)) {
+                return [int]($closestButton.Left - $dragIndicator.Width + 2)
+            } else {
+                return [int]($closestButton.Left + $closestButton.Width - 1)
+            }
         }
     }
     if ($e.Data.GetDataPresent([System.Windows.Forms.Button])) {
         $dragButton = $e.Data.GetData([System.Windows.Forms.Button])
-        if ($dragButton) {$dragIndicator.Location=New-Object System.Drawing.Point($(Get-IndicatorX $e.X $($e.X -gt ($shortcutsPanel.ClientSize.Width / 2))), 0) ; $dragIndicator.Visible=$true}
+        if ($dragButton) {
+            $isRight = ($e.X -gt ($shortcutsPanel.ClientSize.Width / 2))
+            $dragIndicator.Location = New-Object System.Drawing.Point($(Get-IndicatorX $e.X $isRight), 0)
+            $dragIndicator.Visible = $true
+        }
         $e.Effect = [System.Windows.Forms.DragDropEffects]::Move
     }
     elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
         $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy
-        $dragIndicator.Location = New-Object System.Drawing.Point($(Get-IndicatorX $e.X $($e.X -gt ($shortcutsPanel.ClientSize.Width / 2))), 0)
-        $dragIndicator.Visible  = $true
+        $isRight = ($e.X -gt ($shortcutsPanel.ClientSize.Width / 2))
+        $dragIndicator.Location = New-Object System.Drawing.Point($(Get-IndicatorX $e.X $isRight), 0)
+        $dragIndicator.Visible = $true
     }
 })
 
-function Update-ButtonPosition($button,$xCoordinate){
-    if(-not $button){return}
+function Update-ButtonPosition($button, $xCoordinate) {
+    if (-not $button) { return }
     $shortcutsPanel.Controls.Remove($button)
-    $allButtons=$shortcutsPanel.Controls|Where-Object{$_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.ContainsKey("FilePath")}
-    $leftButtons=@($allButtons|Where-Object{$_.Tag["AlignRight"] -ne "true"}|Sort-Object Left)
-    $rightButtons=@($allButtons|Where-Object{$_.Tag["AlignRight"] -eq "true"}|Sort-Object Left)
-    $isRightGroup=($xCoordinate -gt ($shortcutsPanel.ClientSize.Width/2))
-    $targetButtons=if($isRightGroup){,$rightButtons}else{,$leftButtons}
-    $insertIndex=0
-    foreach($currentButton in $targetButtons){
-        if($xCoordinate -lt ($currentButton.Left+($currentButton.Width/2))){break}
+    $allButtons = $shortcutsPanel.Controls | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.ContainsKey("FilePath") }
+    $leftButtons = @($allButtons | Where-Object { $_.Tag["AlignRight"] -ne "true" } | Sort-Object Left)
+    $rightButtons = @($allButtons | Where-Object { $_.Tag["AlignRight"] -eq "true" } | Sort-Object Left)
+    $isRightGroup = ($xCoordinate -gt ($shortcutsPanel.ClientSize.Width/2))
+    $targetButtons = if ($isRightGroup) { $rightButtons } else { $leftButtons }
+    $insertIndex = 0
+    foreach ($currentButton in $targetButtons) {
+        if ($xCoordinate -lt ($currentButton.Left + ($currentButton.Width/2))) { break }
         $insertIndex++
     }
-    $newGroup=@()
-    if($insertIndex -gt 0){$newGroup+=$targetButtons[0..($insertIndex-1)]}
-    $newGroup+=$button
-    if($insertIndex -lt $targetButtons.Count){$newGroup+=$targetButtons[$insertIndex..($targetButtons.Count-1)]}
-    $newList=if($isRightGroup){$leftButtons+$newGroup}else{$newGroup+$rightButtons}
-    $button.Tag["AlignRight"]=$isRightGroup.ToString().ToLower()
-    ($button.ContextMenuStrip.Items|Where-Object{$_.Text -eq "Align right"}).Checked=$isRightGroup
-    for($j=0;$j -lt $newList.Count;$j++){ $newList[$j].Tag.Order=$j }
-    $allButtons|ForEach-Object{ $shortcutsPanel.Controls.Remove($_) }
-    $newList|ForEach-Object{ $shortcutsPanel.Controls.Add($_) }
-    Save-Shortcuts;Update-Layout
+    $newGroup = @()
+    if ($insertIndex -gt 0) { $newGroup += $targetButtons[0..($insertIndex-1)] }
+    $newGroup += $button
+    if ($insertIndex -lt $targetButtons.Count) { $newGroup += $targetButtons[$insertIndex..($targetButtons.Count-1)] }
+    $newList = if ($isRightGroup) { $leftButtons + $newGroup } else { $newGroup + $rightButtons }
+    $button.Tag["AlignRight"] = $isRightGroup.ToString().ToLower()
+    ($button.ContextMenuStrip.Items | Where-Object { $_.Text -eq "Align right" }).Checked = $isRightGroup
+    for ($j = 0; $j -lt $newList.Count; $j++) { $newList[$j].Tag.Order = $j }
+    $allButtons | ForEach-Object { $shortcutsPanel.Controls.Remove($_) }
+    $newList | ForEach-Object { $shortcutsPanel.Controls.Add($_) }
+    Save-Shortcuts; Update-Layout
 }
 
-function Update-FileDrop($files){
-    $allButtons=$shortcutsPanel.Controls|Where-Object{$_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.FilePath}
-    $lookup=@{}
-    $allButtons|ForEach-Object{ if($_.Tag.FilePath -and -not $lookup.ContainsKey($_.Tag.FilePath)){ $lookup[$_.Tag.FilePath]=$_ } }
-    foreach($file in $files){
-        $existingButton=$lookup[$file]
-        if($existingButton){
-            $originalColor=$existingButton.BackColor
-            for($i=1;$i -le 6;$i++){
-                $existingButton.BackColor=if($existingButton.BackColor -eq 'Orange'){$originalColor}else{'Orange'}
-                [System.Windows.Forms.Application]::DoEvents() ; Start-Sleep -Milliseconds 300
+function Update-FileDrop($files) {
+    $allButtons = $shortcutsPanel.Controls | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.FilePath }
+    $lookup = @{}
+    $allButtons | ForEach-Object { if ($_.Tag.FilePath -and -not $lookup.ContainsKey($_.Tag.FilePath)) { $lookup[$_.Tag.FilePath] = $_ } }
+    foreach ($file in $files) {
+        $existingButton = $lookup[$file]
+        if ($existingButton) {
+            $originalColor = $existingButton.BackColor
+            for ($i = 1; $i -le 6; $i++) {
+                $existingButton.BackColor = if ($existingButton.BackColor -eq 'Orange') { $originalColor } else { 'Orange' }
+                [System.Windows.Forms.Application]::DoEvents()
+                Start-Sleep -Milliseconds 300
             }
-            $existingButton.BackColor=$originalColor
+            $existingButton.BackColor = $originalColor
         } else {
             $form.SuspendLayout()
-            Add-ShortcutButton -FilePath $file -Position $e.X ; Start-Sleep -Milliseconds 50
-            $newButton=$shortcutsPanel.Controls| Where-Object{$_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.FilePath -eq $file} | Select-Object -First 1
-            if($newButton){ Update-ButtonPosition $newButton $e.X }
+            Add-ShortcutButton -FilePath $file -Position $e.X
+            Start-Sleep -Milliseconds 50
+            $newButton = $shortcutsPanel.Controls | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Tag -and $_.Tag.FilePath -eq $file } | Select-Object -First 1
+            if ($newButton) { Update-ButtonPosition $newButton $e.X }
             $form.ResumeLayout()
         }
     }
-    $dragIndicator.Visible=$false
+    $dragIndicator.Visible = $false
 }
 
 $shortcutsPanel.Add_DragDrop({
-    param($s,$e)
-    if($e.Data.GetDataPresent([System.Windows.Forms.Button])){
-        $dragButton=$e.Data.GetData([System.Windows.Forms.Button])
+    param($s, $e)
+    if ($e.Data.GetDataPresent([System.Windows.Forms.Button])) {
+        $dragButton = $e.Data.GetData([System.Windows.Forms.Button])
         Update-ButtonPosition $dragButton $e.X
-        $dragIndicator.Visible=$false
+        $dragIndicator.Visible = $false
     }
-    elseif($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)){
-        $files=$e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop)
+    elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+        $files = $e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop)
         Update-FileDrop $files
     }
 })
@@ -885,7 +1206,10 @@ $shortcutsPanel.Add_DragDrop({
     $global:LastDisplaySettingsTime = Get-Date
     if (-not $global:DebounceActive) {
         $global:DebounceActive = $true
-        while (((Get-Date) - $global:LastDisplaySettingsTime).TotalSeconds -lt 2) { Start-Sleep -Milliseconds 100; [System.Windows.Forms.Application]::DoEvents() }
+        while (((Get-Date) - $global:LastDisplaySettingsTime).TotalSeconds -lt 2) {
+            Start-Sleep -Milliseconds 100
+            [System.Windows.Forms.Application]::DoEvents()
+        }
         Update-AppBarPosition -position $global:ToolbarLocation
         Update-Layout
         $global:DebounceActive = $false
@@ -903,7 +1227,7 @@ if (Test-Path -LiteralPath $shortcutsFile) {
     }
 }
 
-$form.Add_Shown({ 
+$form.Add_Shown({
     Update-AppBarPosition -position $global:ToolbarLocation
     Update-Layout
     [System.Windows.Forms.Application]::DoEvents()
@@ -924,12 +1248,14 @@ $form.Add_Shown({
                 [System.Windows.Forms.MessageBox]::Show("Error: The file does not contain any valid shortcut sections.", "Structure Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
                 return
             }
-            $requiredKeys = @("ShowText", "AlignRight", "Path", "DisplayName", "Order", "OpenAsAdmin")
+            $requiredKeys = @("ShowText", "AlignRight", "Path", "DisplayName", "Order", "OpenAsAdmin", "AdminAccessFailAlternative")
             foreach ($section in $sections) {
                 $sectionName = $section.Groups["section"].Value
                 $content = $section.Groups["content"].Value.Trim()
                 $missingKeys = @()
-                foreach ($key in $requiredKeys) { if ($content -notmatch "(?im)^\s*$key\s*=") { $missingKeys += $key } }
+                foreach ($key in $requiredKeys) {
+                    if ($content -notmatch "(?im)^\s*$key\s*=") { $missingKeys += $key }
+                }
                 if ($missingKeys.Count -gt 0) {
                     [System.Windows.Forms.MessageBox]::Show("Error: Section [$sectionName] is missing the following key(s): " + ($missingKeys -join ", "), "Structure Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
                     return
@@ -941,7 +1267,9 @@ $form.Add_Shown({
 })
 
 $form.Add_FormClosing({
-    if ($global:BaselineWorkArea) { [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$global:BaselineWorkArea, [AppBar]::SPIF_UPDATEINIFILE) | Out-Null }
+    if ($global:BaselineWorkArea) {
+        [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$global:BaselineWorkArea, [AppBar]::SPIF_UPDATEINIFILE) | Out-Null
+    }
     if ($script:AdminHelperProcess -and -not $script:AdminHelperProcess.HasExited) { $script:AdminHelperProcess.Kill() }
 })
 
