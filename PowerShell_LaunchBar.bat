@@ -2,7 +2,7 @@
     cls & @echo off & chcp 437 >nul & title PowerShell LaunchBar
 
     REM Author  : Leo Gillet - Freenitial on GitHub
-    REM Version : 0.91
+    REM Version : 0.92
 
     REM Optionnal arguments : 
     REM     1) Filepath of .ini file containing shortcuts
@@ -91,9 +91,22 @@ public class IconExtractor {
 
 # Global variables and paths
 $savePath = Join-Path $env:LOCALAPPDATA "Powershell_Launchbar"
+$logsPath  = Join-Path $env:LOCALAPPDATA "Powershell_Launchbar\Logs"
 $shortcutsFile = Join-Path $savePath "shortcuts.ini"
 $settingsFile  = Join-Path $savePath "settings.ini"
 if (-not (Test-Path -LiteralPath $savePath)) { New-Item -ItemType Directory -Path $savePath | Out-Null }
+if (-not (Test-Path -LiteralPath $logsPath)) { New-Item -ItemType Directory -Path $logsPath | Out-Null }
+$logFile = Join-Path $logsPath ("{0:yyyyMMdd_HHmmss}.log" -f (Get-Date))
+if (-not (Test-Path -LiteralPath $logFile)) { New-Item -ItemType File -Path $logFile | Out-Null }
+
+function Log {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$message
+    )
+    Write-Host $message
+    Add-Content -Path $logFile -Value $message
+}
 
 $global:Settings = @{
     ToolbarLocation        = "Top"
@@ -583,12 +596,36 @@ function Show-OptionsWindow {
     $optForm.Dispose()
 }
 
+# --- TEST-PATHACESS (NOUVELLE FONCTION) ---
+function Test-PathAcess {
+    param([string]$Path)
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            Get-ChildItem -LiteralPath $Path -ErrorAction Stop | Out-Null
+            return $true
+        }
+    } catch { }
+    return $false
+}
+
 # --- ADMIN HELPER ---
 function Start-AdminHelper {
     if ($script:AdminHelperStarted) { return }
     # On récupère le SID de l'utilisateur standard
     $script:StandardUserSID = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+
     $helperScript = @"
+function Test-PathAcess {
+    param([string]`$Path)
+    try {
+        if (Test-Path -LiteralPath `$Path) {
+            Get-ChildItem -LiteralPath `$Path -ErrorAction Stop | Out-Null
+            return `$true
+        }
+    } catch { }
+    return `$false
+}
+
 `$pipeName = 'PSAdminHelperPipe'
 while (`$true) {
     try {
@@ -598,41 +635,35 @@ while (`$true) {
         `$ps.AddAccessRule((New-Object System.IO.Pipes.PipeAccessRule(`$elevatedSID, [System.IO.Pipes.PipeAccessRights]::ReadWrite, [System.Security.AccessControl.AccessControlType]::Allow)))
         `$stdSID = New-Object System.Security.Principal.SecurityIdentifier('$script:StandardUserSID')
         `$ps.AddAccessRule((New-Object System.IO.Pipes.PipeAccessRule(`$stdSID, [System.IO.Pipes.PipeAccessRights]::ReadWrite, [System.Security.AccessControl.AccessControlType]::Allow)))
-        `$server = New-Object System.IO.Pipes.NamedPipeServerStream(`$pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 1024, 1024, `$ps)
-        `$server.WaitForConnection()
-        # Lecture du message envoyé par le client (au format Mode::Commande)
-        `$reader = New-Object System.IO.StreamReader(`$server)
-        `$raw = `$reader.ReadLine()
-        if (`$raw) {
-            `$parts = `$raw -split '::',2
-            `$mode, `$cmd = if (`$parts.Count -eq 2) { `$parts } else { 'Run', `$raw }
-            switch (`$mode) {
-                'Test' {
-                    try   { `$output = (Invoke-Expression `$cmd 2>&1).Trim() }
-                    catch { `$output = '[Test Error]' + `$(`$_.Exception.Message.Replace('`n',' ').Replace('`r',' ')) }
-                }
-                'Run' {
-                    try   { Invoke-Expression `$cmd; `$output = 'OK' }
-                    catch { `$output = '[Run Error]' + `$(`$_.Exception.Message.Replace('`n',' ').Replace('`r',' ')) }
-                }
-            }
-            `$writer = New-Object System.IO.StreamWriter(`$server)
+        `$pipeStream = New-Object System.IO.Pipes.NamedPipeServerStream(`$pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 1024, 1024, `$ps)
+        `$pipeStream.WaitForConnection()
+        # Lecture du message envoyé par le client
+        `$reader = New-Object System.IO.StreamReader(`$pipeStream)
+        `$cmd = `$reader.ReadLine()
+        if (`$cmd) {
+            try   { `$output = (Invoke-Expression `$cmd) }
+            catch { `$output = '[Pipeline Error] ' + `$(`$_.Exception.Message) }
+            `$writer = New-Object System.IO.StreamWriter(`$pipeStream)
             `$writer.AutoFlush = `$true
             `$writer.WriteLine(`$output)
             `$writer.Dispose()
         }
     }
     catch {
-        Write-Host 'ERROR in helper: ' + `$(`$_.Exception.Message.Replace('`n', ' ').Replace('`r', ' '))
+        Write-Host '[Pipeline UNKNOWN Error]: ' + `$(`$_.Exception.Message)
         Read-Host "Press Enter to continue..."
     }
     finally {
         if (`$reader) { `$reader.Dispose() }
-        if (`$server) { if (`$server.IsConnected) { `$server.Disconnect() }; `$server.Dispose() }
+        if (`$pipeStream) {
+            if (`$pipeStream.IsConnected) { `$pipeStream.Disconnect() }
+            `$pipeStream.Dispose()
+        }
         Start-Sleep -Seconds 1
     }
 }
 "@
+
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = "powershell.exe"
@@ -644,39 +675,28 @@ while (`$true) {
         Start-Sleep -Seconds 2
     }
     catch {
-        Write-Host "DEBUG: Could not start Admin Helper process"
+        Log "Could not start Admin Helper process"
     }
 }
 
 # --- ADMIN RUN ---
 function Invoke-AdminRun {
     param([string]$filePath)
-    Write-Host "DEBUG: filePath input is $filePath"
-    if (-not (Test-Path $filePath)) {
-        Write-Host "DEBUG: filePath does not exist"
-        return
-    }
-    
+    Log "filePath input is $filePath"
     # Fonction locale pour envoyer une commande au helper via le pipe
     function Send-AdminCommand {
-        param(
-            [string]$mode,
-            [string]$command
-        )
-        $payload = "$mode::$command"
+        param([string]$command)
         try {
             $client = New-Object System.IO.Pipes.NamedPipeClientStream(".", "PSAdminHelperPipe", [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None)
             $client.Connect(15000)
             $writer = New-Object System.IO.StreamWriter($client)
             $writer.AutoFlush = $true
             $reader = New-Object System.IO.StreamReader($client)
-            $writer.WriteLine($payload)
+            $writer.WriteLine($command)
             $writer.Flush()
             return $reader.ReadLine()
         }
-        catch {
-            return $null
-        }
+        catch { return $null }
         finally {
             if ($writer) { $writer.Dispose() }
             if ($reader) { $reader.Dispose() }
@@ -691,20 +711,6 @@ function Invoke-AdminRun {
         $target = $shortcut.TargetPath
         $arguments = $shortcut.Arguments
         $workDir = $shortcut.WorkingDirectory
-        if ($workDir -and -not (Test-Path $workDir)) {
-            Write-Host "DEBUG: workingDirectory '$workDir' is not valid, using target folder."
-            $workDir = Split-Path $target
-        }
-        else {
-            if ($workDir) {
-                $wdTest = Send-AdminCommand "Test" "if (Test-Path '$workDir') { Write-Output OK }"
-                if ($wdTest -ne "OK") {
-                    Write-Host "DEBUG: admin cannot access workingDirectory '$workDir', fallback to target folder."
-                    $workDir = Split-Path $target
-                }
-            }
-        }
-        Write-Host "DEBUG: resolved shortcut: target=$target, arguments=$arguments, workingDirectory=$workDir"
     }
     else {
         $target = $filePath
@@ -713,70 +719,72 @@ function Invoke-AdminRun {
     }
     
     # Test d'accès admin à la cible
-    $adminTest = Send-AdminCommand "Test" "if (Test-Path '$target') { Write-Output OK }"
-    Write-Host "DEBUG: admin test result: $adminTest"
-    
-    if ($adminTest -eq "OK") {
-        Write-Host "DEBUG: admin can read target"
-        if ($arguments -or $workDir) {
-            $cmd = "Start-Process -FilePath '$target'"
-            if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
-            if ($workDir) { $cmd += " -WorkingDirectory '$workDir'" }
+    $testAdmin_target = Send-AdminCommand "if (Test-PathAcess '$target') { Write-Output OK }"
+    if ($testAdmin_target -eq "OK") {
+        Log "Admin can read target"
+        $cmd = "Start-Process -FilePath '$target'"
+        if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
+        if ($workDir) { 
+            $testAdmin_workingDir = Send-AdminCommand "if (Test-PathAcess '$workDir') { Write-Output OK }"
+            if ($testAdmin_workingDir -eq "OK") { $cmd += " -WorkingDirectory '$workDir'" } 
+            else { 
+                Log "Admin cannot access workingDirectory '$workDir', fallback to target folder."
+                $cmd += " -WorkingDirectory '$(Split-Path $target)'"
+            }
         }
-        else {
-            $cmd = $target
-        }
-        $result = Send-AdminCommand "Run" $cmd
-        Write-Host "DEBUG: start-process result: $result"
+        Send-AdminCommand $cmd
     }
     else {
-        Write-Host "DEBUG: admin cannot read target"
+        Log "Admin cannot read target"
+        if (-not (Test-PathAcess $target)) { Log "User cannot read target too, cancelling." ; return }
         $item = Get-Item $target -ErrorAction SilentlyContinue
-        if (-not $item) { Write-Host "DEBUG: cannot get item"; return }
-        if ($item.PSIsContainer) {
-            $temp = Join-Path $env:TEMP ($item.Name + "_" + [guid]::NewGuid().ToString())
-            Write-Host "DEBUG: copying folder to temp: $temp"
-            Copy-Item -Path $target -Destination $temp -Recurse -ErrorAction Stop
-        }
-        else {
-            $size = $item.Length
-            Write-Host "DEBUG: file size is $size"
-            if ($size -le 10000000) {
-                $temp = Join-Path $env:TEMP ($item.BaseName + "_" + [guid]::NewGuid().ToString() + $item.Extension)
-                Write-Host "DEBUG: copying file to temp: $temp"
-                Copy-Item -Path $target -Destination $temp -ErrorAction Stop
-            }
-            else {
-                Add-Type -AssemblyName System.Windows.Forms
-                $sizeMB = [math]::Round($size / 1MB, 2)
-                $msg = "File not readable as Admin`nLocal copy before run as admin?`nSize: " + $sizeMB + " MB"
-                Write-Host "DEBUG: showing msgbox"
-                $res = [System.Windows.Forms.MessageBox]::Show($msg, "Admin Run", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
-                if ($res -eq [System.Windows.Forms.DialogResult]::Yes) {
-                    $temp = Join-Path $env:TEMP ($item.BaseName + "_" + [guid]::NewGuid().ToString() + $item.Extension)
-                    Write-Host "DEBUG: copying large file to temp: $temp"
-                    Copy-Item -Path $target -Destination $temp -ErrorAction Stop
+        if (-not $item) { Log "Cannot get item" ; return }
+        $size = $item.Length ; $sizeMB = [math]::Round($size / 1MB, 2)
+        $msg = "$(if ($item.PSIsContainer) { 'Folder' } else { 'File' }) not readable as Admin`nLocal copy before run as admin?`nSize: $sizeMB MB"
+
+        $chooseForm = New-Object System.Windows.Forms.Form ; $chooseForm.Text = "Admin Run" ; $chooseForm.Size = New-Object System.Drawing.Size(500,250) ; $chooseForm.StartPosition = "CenterScreen"
+        $label=New-Object System.Windows.Forms.Label ; $label.Text=$msg ; $label.Location=New-Object System.Drawing.Point(10,10) ; $label.Size=New-Object System.Drawing.Size(480,100) ; $label.AutoSize=$false
+        $buttonAdmin=New-Object System.Windows.Forms.Button ; $buttonAdmin.Text="Local copy, then run as admin" ; $buttonAdmin.Size=New-Object System.Drawing.Size(140,30) ; $buttonAdmin.Location=New-Object System.Drawing.Point(10,150)
+        $buttonUser=New-Object System.Windows.Forms.Button ; $buttonUser.Text="Run as user" ; $buttonUser.Size=New-Object System.Drawing.Size(140,30) ; $buttonUser.Location=New-Object System.Drawing.Point(170,150)
+        $buttonCancel=New-Object System.Windows.Forms.Button ; $buttonCancel.Text="Cancel" ; $buttonCancel.Size=New-Object System.Drawing.Size(140,30) ; $buttonCancel.Location=New-Object System.Drawing.Point(330,150)
+        $chooseForm.Controls.Add($label) ; $chooseForm.Controls.Add($buttonAdmin) ; $chooseForm.Controls.Add($buttonUser) ; $chooseForm.Controls.Add($buttonCancel)
+        $buttonAdmin.DialogResult = [System.Windows.Forms.DialogResult]::Yes ; $buttonCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel ; $buttonUser.DialogResult = [System.Windows.Forms.DialogResult]::Ignore
+        $chooseForm.AcceptButton = $buttonAdmin ; $chooseForm.CancelButton = $buttonCancel
+        $result = $chooseForm.ShowDialog()
+        
+        if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+            # Option : Local copy, then run as admin
+            $temp = Join-Path $env:TEMP (if ($item.PSIsContainer) { $item.Name } else { $item.BaseName + $item.Extension })
+            Log "Copying large file to temp: $temp"
+            Copy-Item -Path $target -Destination $temp -ErrorAction Stop
+            $cmd = "Start-Process -FilePath '$temp'"
+            if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
+            if ($workDir) {
+                $testAdmin_workingDir = Send-AdminCommand "if (Test-PathAcess '$workDir') { Write-Output OK }"
+                if ($testAdmin_workingDir -eq "OK") { $cmd += " -WorkingDirectory '$workDir'" }
+                else { 
+                    Log "admin cannot access workingDirectory '$workDir', fallback to target folder."
+                    $cmd += " -WorkingDirectory '$(Split-Path $target)'"
                 }
-                else {
-                    Write-Host "DEBUG: user cancelled run"
-                    return
+            }
+            Send-AdminCommand $cmd
+        }
+        elseif ($result -eq [System.Windows.Forms.DialogResult]::Ignore) {
+            # Option : Run as user
+            $cmd = "Start-Process -FilePath '$target'"
+            if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
+            if ($workDir) {
+                if (Test-PathAcess $workDir) { $cmd += " -WorkingDirectory '$workDir'" }
+                else { 
+                    Log "User cannot access workingDirectory '$workDir', fallback to target folder."
+                    $cmd += " -WorkingDirectory '$(Split-Path $target)'"
                 }
             }
+            Invoke-Expression $cmd
         }
-        $cmd = "Start-Process -FilePath '$temp'"
-        if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
-        if ($workDir) { $cmd += " -WorkingDirectory '$workDir'" }
-        $result = Send-AdminCommand "Run" $cmd
-        Write-Host "DEBUG: start-process result: $result"
+        else { Log "User cancelled run" ; return }
     }
 }
-
-
-
-
-
-
-
 
 
 # --- Events ---
