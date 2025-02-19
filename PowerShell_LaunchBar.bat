@@ -187,8 +187,8 @@ function Log {
     }
 }
 
-log "Init Global variables and paths"
-log "PSCommandPath = $PSCommandPath"
+Log "Init Global variables and paths"
+Log "PSCommandPath = $PSCommandPath"
 
 $global:Settings = @{
     ToolbarLocation                = "Top"
@@ -222,7 +222,7 @@ $global:CurrentTooltipControl = $null
 $canRequireAdminExtensions = @(".exe",".bat",".cmd",".ps1",".msc",".msi",".msp",".vbs",".vbe",".js",".jse",".wsf",".wsh",".cpl",".reg", ".lnk")
 
 function Write-IniFile($Path, $Data) {
-    log "Write IniFile begin..."
+    Log "Write IniFile begin..."
     $lines = @()
     foreach ($section in $Data.Keys) {
         if ($Data[$section] -is [System.Collections.IDictionary]) {
@@ -235,11 +235,11 @@ function Write-IniFile($Path, $Data) {
         }
     }
     Set-Content -Path $Path -Value $lines
-    log "Write IniFile end - OK"
+    Log "Write IniFile end - OK"
 }
 
 function Save-Shortcuts {
-    log "Saving shortcuts begin..."
+    Log "Saving shortcuts begin..."
     $data = [ordered]@{}; $index = 0
     foreach ($ctrl in $shortcutsPanel.Controls) {
         if ($ctrl -is [System.Windows.Forms.Button] -and $ctrl.Tag -and $ctrl.Tag.ContainsKey("FilePath")) {
@@ -256,13 +256,13 @@ function Save-Shortcuts {
         }
     }
     Write-IniFile $shortcutsFile $data
-    log "Saved shortcuts end - OK"
+    Log "Saved shortcuts end - OK"
 }
 
-function Save-Settings { log "Saving settings begin..."; Write-IniFile $settingsFile @{ Settings = $global:Settings }; log "Saved settings end - OK" }
+function Save-Settings { Log "Saving settings begin..."; Write-IniFile $settingsFile @{ Settings = $global:Settings }; Log "Saved settings end - OK" }
 
 
-log "Create main Windows Forms" 
+Log "Create main Windows Forms" 
 $form = New-Object System.Windows.Forms.Form
 $form.SuspendLayout()
 $form.FormBorderStyle = 'None'
@@ -314,7 +314,7 @@ $dragIndicator.BringToFront()
 # --- Update AppBar position and working area ---
 function Update-AppBarPosition {
     param([string]$position)
-    log "Updating AppBarPosition begin..."
+    Log "Updating AppBarPosition begin..."
     $handle = $form.Handle
     $appBarData = New-Object AppBar+APPBARDATA
     $appBarData.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($appBarData)
@@ -350,12 +350,12 @@ function Update-AppBarPosition {
     $newWorkArea = New-Object AppBar+RECT -Property @{ left=$global:BaselineWorkArea.left; top=$workTop; right=$global:BaselineWorkArea.right; bottom=$workBottom }
     [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$newWorkArea, [AppBar]::SPIF_UPDATEINIFILE) | Out-Null
     Start-Sleep -Milliseconds 200
-    log "Updated AppBarPosition end - OK"
+    Log "Updated AppBarPosition end - OK"
 }
 
 # --- Update layout and appearance ---
 function Update-Layout {
-    log "Updating Layout begin..."
+    Log "Updating Layout begin..."
     switch ($global:Settings["ThicknessMode"]) {
         "Small"  { $iconSize = 14; }
         "Medium" { $iconSize = 22; }
@@ -415,7 +415,7 @@ function Update-Layout {
     foreach ($btn in $rightSorted) { $rightX -= $btn.Width ; $btn.Location = New-Object System.Drawing.Point($rightX, 0) ; $rightX -= $spacing }
     $g.Dispose()
     Save-Settings
-    log "Updating Layout end - OK"
+    Log "Updating Layout end - OK"
 }
 
 function Add-ShortcutButton {
@@ -434,7 +434,7 @@ function Add-ShortcutButton {
     }
     #>
 
-    log "Adding ShortcutButton begin '$FilePath'..."
+    Log "Adding ShortcutButton begin '$FilePath'..."
 
     $isFolder = -not ($FilePath -match '\.[^\\]+$')
     if (-not $isFolder) { $ext = [System.IO.Path]::GetExtension($FilePath).ToLower() } else { $ext = "" }
@@ -442,8 +442,8 @@ function Add-ShortcutButton {
     if (-not $canOpenAsAdmin) { $DefOpenAsAdmin = "false" }
 
     $icon = $null
-    try { $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($FilePath) } catch { $icon = $null; log "Icon not found with method 1" }
-    if (-not $icon) { try { $icon = [IconExtractor]::GetIcon($FilePath) } catch { log "Icon not found with method 2" } }
+    try { $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($FilePath) } catch { $icon = $null; Log "Icon not found with method 1" }
+    if (-not $icon) { try { $icon = [IconExtractor]::GetIcon($FilePath) } catch { Log "Icon not found with method 2" } }
     $img = $null
     if ($icon) {
         try {
@@ -679,14 +679,14 @@ function Add-ShortcutButton {
     $btn.Add_MouseLeave({ param($s, $e) ; $tooltip.Hide($s) })
     
     $shortcutsPanel.Controls.Add($btn)
-    log "Added ShortcutButton end '$FilePath' - OK"
+    Log "Added ShortcutButton end '$FilePath' - OK"
 }
 
 function Export-INI {
     param([string]$INIFile)
     $sfd = New-Object System.Windows.Forms.SaveFileDialog
     $sfd.Filter = "INI Files|*.ini|All Files|*.*"
-    if ($sfd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { log "Exporting $INIFile in '$($sfd.FileName)'"; Copy-Item -Path $INIFile -Destination $sfd.FileName -Force; log "Exported $INIFile - OK" }
+    if ($sfd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Log "Exporting $INIFile in '$($sfd.FileName)'"; Copy-Item -Path $INIFile -Destination $sfd.FileName -Force; Log "Exported $INIFile - OK" }
 }
 
 $settingsButton.Add_Click({
@@ -1133,14 +1133,14 @@ $shortcutsPanel.Add_DragDrop({
     }
     elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
         $files = $e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop)
-        log "Files dropped on LaunchBar - $files"
+        Log "Files dropped on LaunchBar - $files"
         Update-FileDrop $files
     }
 })
 
 [Microsoft.Win32.SystemEvents]::add_DisplaySettingsChanged({
     $global:LastDisplaySettingsTime = Get-Date
-    log "DisplaySettingsChanged event begin..."
+    Log "DisplaySettingsChanged event begin..."
     if (-not $global:DebounceActive) {
         $global:DebounceActive = $true
         while (((Get-Date) - $global:LastDisplaySettingsTime).TotalSeconds -lt 2) { Start-Sleep -Milliseconds 100 ; [System.Windows.Forms.Application]::DoEvents() }
@@ -1148,7 +1148,7 @@ $shortcutsPanel.Add_DragDrop({
         Update-Layout
         $global:DebounceActive = $false
     }
-    log "DisplaySettingsChanged event end..."
+    Log "DisplaySettingsChanged event end..."
 })
 
 function Import-INI {
@@ -1317,14 +1317,14 @@ if ($IniFiles.Count -eq 0) { Log "Loading existing settings from '$settingsFile'
 else { foreach ($IniFile in $IniFiles) { Log "Importing INI file at launch: '$IniFile'..."; Import-INI $IniFile ; Log "Imported INI file at launch: '$IniFile' - OK"} }
 
 Update-AppBarPosition -position $global:Settings["ToolbarLocation"]
-$form.Add_Shown({ $form.ResumeLayout() ; Update-Layout : log "Main Form loaded." })
+$form.Add_Shown({ $form.ResumeLayout() ; Update-Layout : Log "Main Form loaded." })
 
 $form.Add_FormClosing({
-    log "Main Form closing."
+    Log "Main Form closing."
     if ($global:BaselineWorkArea) { [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$global:BaselineWorkArea, [AppBar]::SPIF_UPDATEINIFILE) | Out-Null }
-    if ($script:AdminHelperProcess -and -not $script:AdminHelperProcess.HasExited) { log "Killing AdminHelperProcess..."; $script:AdminHelperProcess.Kill(); log "Killed AdminHelperProcess - OK" }
+    if ($script:AdminHelperProcess -and -not $script:AdminHelperProcess.HasExited) { Log "Killing AdminHelperProcess..."; $script:AdminHelperProcess.Kill(); Log "Killed AdminHelperProcess - OK" }
 })
 
 [System.Windows.Forms.Application]::Run($form)
-log "Self removing from $PSCommandPath"
+Log "Self removing from $PSCommandPath"
 Remove-Item $PSCommandPath -Force
