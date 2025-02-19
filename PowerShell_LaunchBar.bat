@@ -19,7 +19,7 @@
     echo.
     echo.
     echo    =============================================================================
-    echo                               PowerShell LaunchBar v1.00
+    echo                               PowerShell LaunchBar v1.01
     echo                                           ---
     echo                        Author : Leo Gillet - Freenitial on GitHub
     echo    =============================================================================
@@ -75,7 +75,7 @@
     echo.
     echo    =============================================================================
     echo.
-    pause>nul & exit /b
+    pause >nul & exit /b
 #>
 
 
@@ -187,8 +187,8 @@ function Log {
     }
 }
 
-Log "Init Global variables and paths"
-Log "PSCommandPath = $PSCommandPath"
+log "Init Global variables and paths"
+log "PSCommandPath = $PSCommandPath"
 
 $global:Settings = @{
     ToolbarLocation                = "Top"
@@ -222,7 +222,7 @@ $global:CurrentTooltipControl = $null
 $canRequireAdminExtensions = @(".exe",".bat",".cmd",".ps1",".msc",".msi",".msp",".vbs",".vbe",".js",".jse",".wsf",".wsh",".cpl",".reg", ".lnk")
 
 function Write-IniFile($Path, $Data) {
-    Log "Write IniFile begin..."
+    log "Write IniFile begin..."
     $lines = @()
     foreach ($section in $Data.Keys) {
         if ($Data[$section] -is [System.Collections.IDictionary]) {
@@ -235,11 +235,11 @@ function Write-IniFile($Path, $Data) {
         }
     }
     Set-Content -Path $Path -Value $lines
-    Log "Write IniFile end - OK"
+    log "Write IniFile end - OK"
 }
 
 function Save-Shortcuts {
-    Log "Saving shortcuts begin..."
+    log "Saving shortcuts begin..."
     $data = [ordered]@{}; $index = 0
     foreach ($ctrl in $shortcutsPanel.Controls) {
         if ($ctrl -is [System.Windows.Forms.Button] -and $ctrl.Tag -and $ctrl.Tag.ContainsKey("FilePath")) {
@@ -256,13 +256,13 @@ function Save-Shortcuts {
         }
     }
     Write-IniFile $shortcutsFile $data
-    Log "Saved shortcuts end - OK"
+    log "Saved shortcuts end - OK"
 }
 
-function Save-Settings { Log "Saving settings begin..."; Write-IniFile $settingsFile @{ Settings = $global:Settings }; Log "Saved settings end - OK" }
+function Save-Settings { log "Saving settings begin..."; Write-IniFile $settingsFile @{ Settings = $global:Settings }; log "Saved settings end - OK" }
 
 
-Log "Create main Windows Forms" 
+log "Create main Windows Forms" 
 $form = New-Object System.Windows.Forms.Form
 $form.SuspendLayout()
 $form.FormBorderStyle = 'None'
@@ -314,7 +314,7 @@ $dragIndicator.BringToFront()
 # --- Update AppBar position and working area ---
 function Update-AppBarPosition {
     param([string]$position)
-    Log "Updating AppBarPosition begin..."
+    log "Updating AppBarPosition begin..."
     $handle = $form.Handle
     $appBarData = New-Object AppBar+APPBARDATA
     $appBarData.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($appBarData)
@@ -350,12 +350,12 @@ function Update-AppBarPosition {
     $newWorkArea = New-Object AppBar+RECT -Property @{ left=$global:BaselineWorkArea.left; top=$workTop; right=$global:BaselineWorkArea.right; bottom=$workBottom }
     [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$newWorkArea, [AppBar]::SPIF_UPDATEINIFILE) | Out-Null
     Start-Sleep -Milliseconds 200
-    Log "Updated AppBarPosition end - OK"
+    log "Updated AppBarPosition end - OK"
 }
 
 # --- Update layout and appearance ---
 function Update-Layout {
-    Log "Updating Layout begin..."
+    log "Updating Layout begin..."
     switch ($global:Settings["ThicknessMode"]) {
         "Small"  { $iconSize = 14; }
         "Medium" { $iconSize = 22; }
@@ -415,7 +415,7 @@ function Update-Layout {
     foreach ($btn in $rightSorted) { $rightX -= $btn.Width ; $btn.Location = New-Object System.Drawing.Point($rightX, 0) ; $rightX -= $spacing }
     $g.Dispose()
     Save-Settings
-    Log "Updating Layout end - OK"
+    log "Updating Layout end - OK"
 }
 
 function Add-ShortcutButton {
@@ -434,7 +434,7 @@ function Add-ShortcutButton {
     }
     #>
 
-    Log "Adding ShortcutButton begin '$FilePath'..."
+    log "Adding ShortcutButton begin '$FilePath'..."
 
     $isFolder = -not ($FilePath -match '\.[^\\]+$')
     if (-not $isFolder) { $ext = [System.IO.Path]::GetExtension($FilePath).ToLower() } else { $ext = "" }
@@ -442,8 +442,8 @@ function Add-ShortcutButton {
     if (-not $canOpenAsAdmin) { $DefOpenAsAdmin = "false" }
 
     $icon = $null
-    try { $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($FilePath) } catch { $icon = $null; Log "Icon not found with method 1" }
-    if (-not $icon) { try { $icon = [IconExtractor]::GetIcon($FilePath) } catch { Log "Icon not found with method 2" } }
+    try { $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($FilePath) } catch { $icon = $null; log "Icon not found with method 1" }
+    if (-not $icon) { try { $icon = [IconExtractor]::GetIcon($FilePath) } catch { log "Icon not found with method 2" } }
     $img = $null
     if ($icon) {
         try {
@@ -679,14 +679,14 @@ function Add-ShortcutButton {
     $btn.Add_MouseLeave({ param($s, $e) ; $tooltip.Hide($s) })
     
     $shortcutsPanel.Controls.Add($btn)
-    Log "Added ShortcutButton end '$FilePath' - OK"
+    log "Added ShortcutButton end '$FilePath' - OK"
 }
 
 function Export-INI {
     param([string]$INIFile)
     $sfd = New-Object System.Windows.Forms.SaveFileDialog
     $sfd.Filter = "INI Files|*.ini|All Files|*.*"
-    if ($sfd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Log "Exporting $INIFile in '$($sfd.FileName)'"; Copy-Item -Path $INIFile -Destination $sfd.FileName -Force; Log "Exported $INIFile - OK" }
+    if ($sfd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { log "Exporting $INIFile in '$($sfd.FileName)'"; Copy-Item -Path $INIFile -Destination $sfd.FileName -Force; log "Exported $INIFile - OK" }
 }
 
 $settingsButton.Add_Click({
@@ -803,7 +803,7 @@ function Show-OptionsWindow {
 }
 
 # --- EHNANCED TEST-PATH ACCESS ---
-function Test-PathAcess {
+function Test-PathAccess {
     param([string]$Path)
     try {
         if (Test-Path -LiteralPath $Path) {
@@ -820,8 +820,88 @@ function Start-AdminHelper {
     Log "Starting AdminHelper begin..."
     $script:StandardUserSID = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 
+    # Generate random pipe names
+    $script:AdminHelperPipeName = "PSAdminHelperPipe_" + [guid]::NewGuid().ToString()
+    $script:AdminHelperTokenPipeName = "PSAdminHelperTokenPipe_" + [guid]::NewGuid().ToString()
+
+    # Create a temporary file to securely pass the pipe names
+    $tempConfigFile = Join-Path $env:TEMP ("AdminHelperConfig_" + [guid]::NewGuid().ToString() + ".txt")
+    # Write the two pipe names (first line: command pipe, second line: token pipe)
+    "$script:AdminHelperPipeName`n$script:AdminHelperTokenPipeName" | Out-File -Encoding ASCII -FilePath $tempConfigFile
+
+    # Helper script: the config file path is injected directly into the script
     $helperScript = @"
-function Test-PathAcess {
+param()
+# Set the config file path (embedded by the parent process)
+`$PipeConfigFile = '$tempConfigFile'
+
+`$showdebug=$($showdebug.IsPresent)
+`$nolog=$($nolog.IsPresent)
+function Log {
+    param(
+        [Parameter(Mandatory = `$true)]
+        [string]`$message
+    )
+    if (`$showdebug.IsPresent) { Log "`$message" }
+    if (-not `$nolog.IsPresent) {
+        `$message = "[`$('{0:yyyy/MM/dd - HH:mm:ss}' -f (Get-Date))] - `$message"
+        Add-Content -Path $logFile -Value `$message
+    }
+}
+
+Log "Helper: Reading config file from: `$PipeConfigFile"
+try {
+    `$pipeNames = Get-Content "`$PipeConfigFile`"
+    `$pipeName = `$pipeNames[0]
+    `$tokenPipeName = `$pipeNames[1]
+    # Delete the config file for security
+    Remove-Item "`$PipeConfigFile`" -Force
+    Log "Helper: Config file processed. PipeName=`$pipeName, TokenPipeName=`$tokenPipeName"
+}
+catch {
+    Log "Helper: Error reading config file: " + `$_.Exception.Message
+    exit 1
+}
+
+# Function to compute HMAC-SHA256
+function Compute-HMAC {
+    param(
+        [string]`$Key,
+        [string]`$Data
+    )
+    try {
+        `$hmac = New-Object System.Security.Cryptography.HMACSHA256
+        `$hmac.Key = [Text.Encoding]::UTF8.GetBytes(`$Key)
+        `$hash = `$hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes(`$Data))
+        return ([BitConverter]::ToString(`$hash) -replace '-', '')
+    }
+    catch {
+        Log "Helper: Compute-HMAC error: " + `$_.Exception.Message
+        return ""
+    }
+}
+
+# Generate a unique secret token for this session
+`$helperToken = [guid]::NewGuid().ToString()
+Log "Helper: Generated helperToken."
+
+# Send the token via a dedicated pipe
+try {
+    `$tokenPipe = New-Object System.IO.Pipes.NamedPipeServerStream(`$tokenPipeName, [System.IO.Pipes.PipeDirection]::Out, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 1024, 1024)
+    Log "Helper: Waiting for token pipe connection..."
+    `$tokenPipe.WaitForConnection()
+    `$tokenWriter = New-Object System.IO.StreamWriter(`$tokenPipe)
+    `$tokenWriter.AutoFlush = `$true
+    `$tokenWriter.WriteLine(`$helperToken)
+    Log "Helper: Token sent via token pipe."
+    `$tokenWriter.Dispose()
+    `$tokenPipe.Dispose()
+}
+catch {
+    Log "Helper: Error with token pipe: " + `$_.Exception.Message
+}
+
+function Test-PathAccess {
     param([string]`$Path)
     try {
         if (Test-Path -LiteralPath `$Path) {
@@ -832,39 +912,56 @@ function Test-PathAcess {
     return `$false
 }
 
-`$pipeName = 'PSAdminHelperPipe'
 while (`$true) {
     try {
-        # Configure pipe security
+        # Configure pipe security: allow only the current user
         `$ps = New-Object System.IO.Pipes.PipeSecurity
         `$elevatedSID = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
         `$ps.AddAccessRule((New-Object System.IO.Pipes.PipeAccessRule(`$elevatedSID, [System.IO.Pipes.PipeAccessRights]::ReadWrite, [System.Security.AccessControl.AccessControlType]::Allow)))
-        `$stdSID = New-Object System.Security.Principal.SecurityIdentifier('$script:StandardUserSID')
-        `$ps.AddAccessRule((New-Object System.IO.Pipes.PipeAccessRule(`$stdSID, [System.IO.Pipes.PipeAccessRights]::ReadWrite, [System.Security.AccessControl.AccessControlType]::Allow)))
-        `$pipeStream = New-Object System.IO.Pipes.NamedPipeServerStream(`$pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 1024, 1024, `$ps)
-        `$pipeStream.WaitForConnection()
-        # Read the command sent by the client
-        `$reader = New-Object System.IO.StreamReader(`$pipeStream)
-        `$cmd = `$reader.ReadLine()
-        if (`$cmd) {
-            try { `$output = (Invoke-Expression `$cmd) }
-            catch { `$output = '[Pipeline Error] ' + `$(`$_.Exception.Message) }
-            `$writer = New-Object System.IO.StreamWriter(`$pipeStream)
-            `$writer.AutoFlush = `$true
-            `$writer.WriteLine(`$output)
-            `$writer.Dispose()
+        
+        # Create the command pipe with the random name
+        `$cmdPipe = New-Object System.IO.Pipes.NamedPipeServerStream(`$pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 1024, 1024, `$ps)
+        Log "Helper: Waiting for command pipe connection..."
+        `$cmdPipe.WaitForConnection()
+        
+        `$writer = New-Object System.IO.StreamWriter(`$cmdPipe)
+        `$writer.AutoFlush = `$true
+        `$reader = New-Object System.IO.StreamReader(`$cmdPipe)
+        
+        # Send a challenge to the client
+        `$challenge = [guid]::NewGuid().ToString()
+        Log "Helper: Sending challenge: `$challenge"
+        `$writer.WriteLine(`$challenge)
+        
+        # Read the expected response in the format: "<HMAC> <command>"
+        `$responseLine = `$reader.ReadLine()
+        Log "Helper: Received response: `$responseLine"
+        if (`$responseLine) {
+            `$parts = `$responseLine.Split(" ",2)
+            if (`$parts.Length -eq 2) {
+                `$clientHMAC = `$parts[0]
+                `$clientCommand = `$parts[1]
+                # Compute the expected HMAC
+                `$expectedHMAC = Compute-HMAC -Key `$helperToken -Data `$challenge
+                Log "Helper: Expected HMAC: `$expectedHMAC"
+                if (`$clientHMAC -eq `$expectedHMAC) {
+                    Log "Helper: HMAC validated. Executing command."
+                    try { `$output = Invoke-Expression `$clientCommand 2>&1 | Out-String }
+                    catch { `$output = "[Pipeline Error] " + `$_.Exception.Message }
+                    `$writer.WriteLine(`$output)
+                }
+                else {
+                    Log "Helper: HMAC mismatch. Command not executed."
+                }
+            }
         }
+        `$reader.Dispose()
+        `$writer.Dispose()
+        `$cmdPipe.Disconnect()
+        `$cmdPipe.Dispose()
     }
     catch {
-        Write-Host '[Pipeline UNKNOWN Error]: ' + `$(`$_.Exception.Message)
-        Read-Host "Press Enter to continue..."
-    }
-    finally {
-        if (`$reader) { `$reader.Dispose() }
-        if (`$pipeStream) {
-            if (`$pipeStream.IsConnected) { `$pipeStream.Disconnect() }
-            `$pipeStream.Dispose()
-        }
+        Log "[Helper Pipeline UNKNOWN Error]: " + `$_.Exception.Message
         Start-Sleep -Seconds 1
     }
 }
@@ -873,15 +970,47 @@ while (`$true) {
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = "powershell.exe"
-        $psi.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -NoExit -Command $helperScript"
+        # Use -EncodedCommand to pass the helper script
+        $encodedHelperScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($helperScript))
+        $psi.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -NoExit -EncodedCommand $encodedHelperScript"
         $psi.Verb = "runas"
         $psi.UseShellExecute = $true
+        Log "Starting helper process"
         $script:AdminHelperProcess = [System.Diagnostics.Process]::Start($psi)
+        Log "Helper process started."
+
+        # Retrieve the secret token via the dedicated pipe
+        $tokenClient = New-Object System.IO.Pipes.NamedPipeClientStream(".", $script:AdminHelperTokenPipeName, [System.IO.Pipes.PipeDirection]::In)
+        Log "Connecting to token pipe"
+        $tokenClient.Connect(15000)
+        Log "Connected to token pipe."
+        $tokenReader = New-Object System.IO.StreamReader($tokenClient)
+        $script:AdminHelperToken = $tokenReader.ReadLine()
+        Log "Retrieved AdminHelperToken"
+        $tokenReader.Dispose()
+        $tokenClient.Dispose()
+
         $script:AdminHelperStarted = $true
-        Start-Sleep -Seconds 2
+        Start-Sleep -Seconds 1
         Log "Started AdminHelper - OK"
     }
-    catch { Log "Could not start Admin Helper process" }
+    catch {
+        Log "Exception during Start-AdminHelper - $($_.Exception.Message)" 
+        Log "Could not start Admin Helper process"
+    }
+}
+
+
+# Compute-HMAC function for the client (challenge–response)
+function Compute-HMAC {
+    param(
+        [string]$Key,
+        [string]$Data
+    )
+    $hmac = New-Object System.Security.Cryptography.HMACSHA256
+    $hmac.Key = [Text.Encoding]::UTF8.GetBytes($Key)
+    $hash = $hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($Data))
+    return ([BitConverter]::ToString($hash) -replace '-', '')
 }
 
 # --- ADMIN RUN ---
@@ -892,18 +1021,25 @@ function Invoke-AdminRun {
     )
     Log "Invoke-AdminRun filePath input is '$filePath'"
     
-    # Local function to send a command to the helper via the pipe
+    # Local function to send a command using the challenge–response protocol
     function Send-AdminCommand {
         param([string]$command)
         try {
-            $client = New-Object System.IO.Pipes.NamedPipeClientStream(".", "PSAdminHelperPipe", [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None)
+            $client = New-Object System.IO.Pipes.NamedPipeClientStream(".", $script:AdminHelperPipeName, [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None)
             $client.Connect(15000)
+            $reader = New-Object System.IO.StreamReader($client)
             $writer = New-Object System.IO.StreamWriter($client)
             $writer.AutoFlush = $true
-            $reader = New-Object System.IO.StreamReader($client)
-            $writer.WriteLine($command)
+            
+            log "Resolving security challenge..."
+            $challenge = $reader.ReadLine()
+            $hmac = Compute-HMAC -Key $script:AdminHelperToken -Data $challenge
+            $message = "$hmac $command"
+            log "Sending command"
+            $writer.WriteLine($message)
             $writer.Flush()
-            return $reader.ReadLine()
+            $response = $reader.ReadLine()
+            return $response
         }
         catch { return $null }
         finally {
@@ -918,8 +1054,10 @@ function Invoke-AdminRun {
         $wsh = New-Object -ComObject WScript.Shell
         $shortcut = $wsh.CreateShortcut($filePath)
         $target = $shortcut.TargetPath
+        $target = [System.Environment]::ExpandEnvironmentVariables($target)
         $arguments = $shortcut.Arguments
         $workDir = $shortcut.WorkingDirectory
+        $WorkDir = [System.Environment]::ExpandEnvironmentVariables($workDir)
     }
     else {
         $target = $filePath
@@ -927,14 +1065,15 @@ function Invoke-AdminRun {
         $workDir = ""
     }
     
+    
     # Test admin access to the target
-    $testAdmin_target = Send-AdminCommand "if (Test-PathAcess '$target') { Write-Output OK }"
+    $testAdmin_target = Send-AdminCommand "if (Test-PathAccess '$target') { Write-Output OK }"
     if ($testAdmin_target -eq "OK") {
         Log "Admin can read target"
         $cmd = "Start-Process -FilePath '$target'"
         if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
         if ($workDir) {
-            $testAdmin_workingDir = Send-AdminCommand "if (Test-PathAcess '$workDir') { Write-Output OK }"
+            $testAdmin_workingDir = Send-AdminCommand "if (Test-PathAccess '$workDir') { Write-Output OK }"
             if ($testAdmin_workingDir -eq "OK") { $cmd += " -WorkingDirectory '$workDir'" }
             else {
                 Log "Admin cannot access workingDirectory '$workDir', fallback to target folder."
@@ -945,7 +1084,7 @@ function Invoke-AdminRun {
     }
     else {
         Log "Admin cannot read target"
-        if (-not (Test-PathAcess $target)) { Log "User cannot read target either, cancelling." ; return }
+        if (-not (Test-PathAccess $target)) { Log "User cannot read target either, cancelling." ; return }
         $item = Get-Item $target -ErrorAction SilentlyContinue
         if (-not $item) { Log "Cannot get item" ; return }
         $size = $item.Length; $sizeMB = [math]::Round($size / 1MB, 2)
@@ -990,37 +1129,36 @@ function Invoke-AdminRun {
         }
         
         switch ($adminAccessFailAlternative) {
-			"LocalCopy" {
-				$temp = Join-Path $env:TEMP $($item.BaseName + $item.Extension)
-				Log "Copying file to temp: $temp"
-				try {
-					if (Test-Path $temp) { Remove-Item $temp -Recurse -Force -ErrorAction Stop }
-					Copy-Item -Path $target -Destination $temp -ErrorAction Stop
-				}
-				catch {
-					[System.Windows.Forms.MessageBox]::Show("Error while suppress existing or copy in temp : " + $_.Exception.Message, "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-					return
-				}
-				else {
-					$cmd = "Start-Process -FilePath '$temp'"
-					if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
-					if ($workDir) {
-						$testAdmin_workingDir = Send-AdminCommand "if (Test-PathAcess '$workDir') { Write-Output OK }"
-						if ($testAdmin_workingDir -eq "OK") { $cmd += " -WorkingDirectory '$workDir'" }
-						else {
-							Log "Admin cannot access workingDirectory '$workDir', fallback to target folder."
-							$cmd += " -WorkingDirectory '$(Split-Path $temp)'"
-						}
-					}
-				}
-				Send-AdminCommand $cmd
-			}
+            "LocalCopy" {
+                $temp = Join-Path $env:TEMP $($item.BaseName + $item.Extension)
+                Log "Copying file to temp: $temp"
+                try {
+                    if (Test-Path $temp) { Remove-Item $temp -Recurse -Force -ErrorAction Stop }
+                    Copy-Item -Path $target -Destination $temp -ErrorAction Stop
+                }
+                catch {
+                    [System.Windows.Forms.MessageBox]::Show("Error while suppress existing or copy in temp : " + $_.Exception.Message, "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                    return
+                }
+                else {
+                    $cmd = "Start-Process -FilePath '$temp'"
+                    if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
+                    if ($workDir) {
+                        $testAdmin_workingDir = Send-AdminCommand "if (Test-PathAccess '$workDir') { Write-Output OK }"
+                        if ($testAdmin_workingDir -eq "OK") { $cmd += " -WorkingDirectory '$workDir'" }
+                        else {
+                            Log "Admin cannot access workingDirectory '$workDir', fallback to target folder."
+                            $cmd += " -WorkingDirectory '$(Split-Path $temp)'"
+                        }
+                    }
+                }
+                Send-AdminCommand $cmd
+            }
             "AsUser" {
-                # Option: Run as user
                 $cmd = "Start-Process -FilePath '$target'"
                 if ($arguments) { $cmd += " -ArgumentList '$arguments'" }
                 if ($workDir) {
-                    if (Test-PathAcess $workDir) { $cmd += " -WorkingDirectory '$workDir'" }
+                    if (Test-PathAccess $workDir) { $cmd += " -WorkingDirectory '$workDir'" }
                     else {
                         Log "User cannot access workingDirectory '$workDir', fallback to target folder."
                         $cmd += " -WorkingDirectory '$(Split-Path $target)'"
@@ -1035,6 +1173,7 @@ function Invoke-AdminRun {
         }
     }
 }
+
 
 # --- Events for drag/drop and layout reordering ---
 $shortcutsPanel.Add_DragEnter({
@@ -1133,14 +1272,14 @@ $shortcutsPanel.Add_DragDrop({
     }
     elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
         $files = $e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop)
-        Log "Files dropped on LaunchBar - $files"
+        log "Files dropped on LaunchBar - $files"
         Update-FileDrop $files
     }
 })
 
 [Microsoft.Win32.SystemEvents]::add_DisplaySettingsChanged({
     $global:LastDisplaySettingsTime = Get-Date
-    Log "DisplaySettingsChanged event begin..."
+    log "DisplaySettingsChanged event begin..."
     if (-not $global:DebounceActive) {
         $global:DebounceActive = $true
         while (((Get-Date) - $global:LastDisplaySettingsTime).TotalSeconds -lt 2) { Start-Sleep -Milliseconds 100 ; [System.Windows.Forms.Application]::DoEvents() }
@@ -1148,7 +1287,7 @@ $shortcutsPanel.Add_DragDrop({
         Update-Layout
         $global:DebounceActive = $false
     }
-    Log "DisplaySettingsChanged event end..."
+    log "DisplaySettingsChanged event end..."
 })
 
 function Import-INI {
@@ -1317,14 +1456,14 @@ if ($IniFiles.Count -eq 0) { Log "Loading existing settings from '$settingsFile'
 else { foreach ($IniFile in $IniFiles) { Log "Importing INI file at launch: '$IniFile'..."; Import-INI $IniFile ; Log "Imported INI file at launch: '$IniFile' - OK"} }
 
 Update-AppBarPosition -position $global:Settings["ToolbarLocation"]
-$form.Add_Shown({ $form.ResumeLayout() ; Update-Layout : Log "Main Form loaded." })
+$form.Add_Shown({ $form.ResumeLayout() ; Update-Layout : log "Main Form loaded." })
 
 $form.Add_FormClosing({
-    Log "Main Form closing."
+    log "Main Form closing."
     if ($global:BaselineWorkArea) { [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$global:BaselineWorkArea, [AppBar]::SPIF_UPDATEINIFILE) | Out-Null }
-    if ($script:AdminHelperProcess -and -not $script:AdminHelperProcess.HasExited) { Log "Killing AdminHelperProcess..."; $script:AdminHelperProcess.Kill(); Log "Killed AdminHelperProcess - OK" }
+    if ($script:AdminHelperProcess -and -not $script:AdminHelperProcess.HasExited) { log "Killing AdminHelperProcess..."; $script:AdminHelperProcess.Kill(); log "Killed AdminHelperProcess - OK" }
 })
 
 [System.Windows.Forms.Application]::Run($form)
-Log "Self removing from $PSCommandPath"
+log "Self removing from $PSCommandPath"
 Remove-Item $PSCommandPath -Force
