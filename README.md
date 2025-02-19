@@ -11,7 +11,7 @@
 - 🎨 **Light and Dark themes**
 - 📏 **Adjustable thickness (Small/Medium/Large)**
 - 🔑 **Run as administrator option for each shortcut (only 1 UAC request)**
-- 🔒 **Securised Pipeline instance for admin launch**
+- 🔒 **Securised pipe for admin launch**
 - 📝 **Customizable shortcut titles**
 - ↔️ **Left/Right alignment options for each shortcut**
 - 💾 **Import/Export shortcuts configuration**
@@ -63,6 +63,43 @@ start "" /d "FOLDER\CONTAINING_batchfile" PowerShell_LaunchBar
 To start from other batch or cmd without exit **+ FORCE IMPORT SHORTCUTS FILE**, launch like this :  
 ```
 start "" /d "FOLDER\CONTAINING_batchfile" PowerShell_LaunchBar "FULLPATH\TO_IMPORT\SHORTCUT.INI" /f
+```
+
+--------------------
+
+### Admin Pipe Security 🔒
+
+An admin powershell opens and stay in the background after the first shortcut has been launched as admin.  
+The next times, the password is not requested.  
+The host script (launched as user) communicate with admin script when admin launch is needed for specified shortcuts.  
+This implementation uses multiple layers of security to ensure that elevated commands are executed only by the host :
+
+```
+Randomized Named Pipe Names:
+
+The command and token pipes are assigned names based on GUIDs (e.g., PSAdminHelperPipe_<GUID>).
+This randomness makes it nearly impossible for an attacker to guess the pipe names and establish an unauthorized connection.
+```
+```
+Secure Transmission of Pipe Configuration:
+
+The parent process writes the pipe names into a temporary configuration file.
+The helper script, running elevated, reads the file at startup and then deletes it immediately to minimize exposure.
+```
+```
+Dedicated Token Exchange:
+
+The helper generates a secret token (a random GUID) and sends it over a dedicated token pipe.
+The client retrieves this token securely without exposing it via command-line arguments or logs.
+```
+```
+Challenge–Response Protocol with HMAC-SHA256:
+
+For every command connection, the helper sends a randomly generated challenge (another GUID).
+The client must compute an HMAC-SHA256 using the secret token and the challenge.
+The computed HMAC is sent along with the command.
+The helper computes its own HMAC for the challenge using the same secret token and compares it to the client's HMAC.
+Only if they match is the command executed.
 ```
 
 --------------------
