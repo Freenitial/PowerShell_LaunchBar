@@ -1456,7 +1456,7 @@ if ($IniFiles.Count -eq 0) { Log "Loading existing settings from '$settingsFile'
 else { foreach ($IniFile in $IniFiles) { Log "Importing INI file at launch: '$IniFile'..."; Import-INI $IniFile ; Log "Imported INI file at launch: '$IniFile' - OK"} }
 
 Update-AppBarPosition -position $global:Settings["ToolbarLocation"]
-$form.Add_Shown({ $form.ResumeLayout() ; Update-Layout : log "Main Form loaded." })
+$form.Add_Shown({ $form.ResumeLayout() ; Update-Layout ; log "Main Form loaded." })
 
 $form.Add_FormClosing({
     log "Main Form closing."
