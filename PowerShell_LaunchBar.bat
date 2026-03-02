@@ -1,5 +1,5 @@
 <# ::
-    cls & @echo off & chcp 437 >nul & title PowerShell LaunchBar
+    cls & @echo off & setlocal & title PowerShell LaunchBar
 
     if /i "%~1"=="/?"       goto :help
     if /i "%~1"=="-?"       goto :help
@@ -10,16 +10,29 @@
 
     set "WindowStyle=Hidden"
     for %%A in (%*) do if /I "%%A"=="-showdebug" set "WindowStyle=Normal"
+    
+    if exist %SystemRoot%\system32\WindowsPowerShell\v1.0\powershell.exe   set "powershell=%SystemRoot%\system32\WindowsPowerShell\v1.0\powershell.exe"
+    if exist %SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe  set "powershell=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
 
-    copy /y "%~f0" "%TEMP%\%~n0.ps1" >NUL && powershell -Nologo -NoProfile -ExecutionPolicy Bypass -WindowStyle %WindowStyle% -File "%TEMP%\%~n0.ps1" %*
-    exit /b
+    set args=%*
+    if defined args set args=%args:^=^^%
+    if defined args set args=%args:<=^<%
+    if defined args set args=%args:>=^>%
+    if defined args set args=%args:&=^&%
+    if defined args set args=%args:|=^|%
+    if defined args set "args=%args:"=\"%"
+    
+    :: PowerShell self-read, skipping batch part
+    %powershell% -NoLogo -NoProfile -Ex Bypass -Window %WindowStyle% -Command "$sb=[ScriptBlock]::Create([IO.File]::ReadAllText('%~f0'));& $sb @args" %args%
+    
+    exit /b %errorlevel%
 
     :help
     mode con: cols=128 lines=60
     echo.
     echo.
     echo    =============================================================================
-    echo                               PowerShell LaunchBar v1.01
+    echo                               PowerShell LaunchBar v1.02
     echo                                           ---
     echo                        Author : Leo Gillet - Freenitial on GitHub
     echo    =============================================================================
@@ -83,7 +96,6 @@
 param(
     [Parameter(Position=0, ValueFromRemainingArguments = $true)]
     [string[]]$IniFiles = @(),
-
     [switch]$force,
     [switch]$showdebug,
     [switch]$nolog
@@ -114,9 +126,6 @@ public class AppBar {
     public const int ABM_QUERYPOS = 3;
     public const int ABE_TOP = 1;
     public const int ABE_BOTTOM = 3;
-    public const int SPI_SETWORKAREA = 47;
-    public const int SPI_GETWORKAREA = 48;
-    public const int SPIF_UPDATEINIFILE = 0x01;
     [StructLayout(LayoutKind.Sequential)]
     public struct APPBARDATA {
         public int cbSize;
@@ -130,10 +139,6 @@ public class AppBar {
     public struct RECT { public int left, top, right, bottom; }
     [DllImport("shell32.dll", CallingConvention = CallingConvention.StdCall)]
     public static extern uint SHAppBarMessage(uint dwMessage, ref APPBARDATA pData);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, ref RECT pvParam, uint fWinIni);
 }
 public class IconExtractor {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
@@ -180,7 +185,7 @@ function Log {
         [Parameter(Mandatory = $true)]
         [string]$message
     )
-    if ($showdebug.IsPresent) { Write-Host $message }
+    Write-Host $message
     if (-not $nolog.IsPresent) {
         $message = "[$('{0:yyyy/MM/dd - HH:mm:ss}' -f (Get-Date))] - $message"
         Add-Content -Path $logFile -Value $message
@@ -188,8 +193,6 @@ function Log {
 }
 
 log "Init Global variables and paths"
-log "PSCommandPath = $PSCommandPath"
-
 $global:Settings = @{
     ToolbarLocation                = "Top"
     ThicknessMode                  = "Small"
@@ -199,6 +202,7 @@ $global:Settings = @{
     NewShortcutAlignRight          = "false"
     NewShortcutAdminAccessFailAlternative = "Ask"
 }
+$global:BarThickness = 25
 function Read-IniFile($Path){
     $ini=[ordered]@{}
     if(Test-Path -LiteralPath $Path){
@@ -215,9 +219,6 @@ function Read-IniFile($Path){
     return $ini
 }
 
-$global:DebounceActive = $false
-$global:BaselineWorkArea = $null
-$global:LastDisplaySettingsTime = Get-Date
 $global:CurrentTooltipControl = $null
 $canRequireAdminExtensions = @(".exe",".bat",".cmd",".ps1",".msc",".msi",".msp",".vbs",".vbe",".js",".jse",".wsf",".wsh",".cpl",".reg", ".lnk")
 
@@ -315,41 +316,25 @@ $dragIndicator.BringToFront()
 function Update-AppBarPosition {
     param([string]$position)
     log "Updating AppBarPosition begin..."
-    $handle = $form.Handle
     $appBarData = New-Object AppBar+APPBARDATA
     $appBarData.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($appBarData)
-    $appBarData.hWnd = $handle
+    $appBarData.hWnd = $form.Handle
     $appBarData.uCallbackMessage = [NativeMethods]::RegisterWindowMessage("AppBarMessage")
     [AppBar]::SHAppBarMessage([AppBar]::ABM_REMOVE, [ref]$appBarData) | Out-Null
-    $currentWorkArea = New-Object AppBar+RECT
-    [AppBar]::SystemParametersInfo([AppBar]::SPI_GETWORKAREA, 0, [ref]$currentWorkArea, 0) | Out-Null
-    if (-not $global:BaselineWorkArea -or (($global:BaselineWorkArea.right - $global:BaselineWorkArea.left) -ne ($currentWorkArea.right - $currentWorkArea.left))) {
-        $global:BaselineWorkArea = New-Object AppBar+RECT -Property @{ left=$currentWorkArea.left; top=$currentWorkArea.top; right=$currentWorkArea.right; bottom=$currentWorkArea.bottom }
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    if ($position -eq "Top") {
+        $appBarData.uEdge = [AppBar]::ABE_TOP
+        $appBarData.rc = New-Object AppBar+RECT -Property @{ left=$screen.Left; top=$screen.Top; right=$screen.Right; bottom=$screen.Top + $global:BarThickness }
+    } else {
+        $appBarData.uEdge = [AppBar]::ABE_BOTTOM
+        $appBarData.rc = New-Object AppBar+RECT -Property @{ left=$screen.Left; top=$screen.Bottom - $global:BarThickness; right=$screen.Right; bottom=$screen.Bottom }
     }
-    $form.Left = $global:BaselineWorkArea.left
-    $form.Width = $global:BaselineWorkArea.right - $global:BaselineWorkArea.left
-    $form.Height = $global:BarThickness
-    switch ($position) {
-        "Top" {
-            $edge = [AppBar]::ABE_TOP
-            $form.Top = $global:BaselineWorkArea.top
-            $workTop = $global:BaselineWorkArea.top + $global:BarThickness
-            $workBottom = $global:BaselineWorkArea.bottom
-        }
-        "Bottom" {
-            $edge = [AppBar]::ABE_BOTTOM
-            $form.Top = $global:BaselineWorkArea.bottom - $global:BarThickness
-            $workTop = $global:BaselineWorkArea.top
-            $workBottom = $global:BaselineWorkArea.bottom - $global:BarThickness
-        }
-    }
-    $appBarData.uEdge = $edge
-    $appBarData.rc = New-Object AppBar+RECT -Property @{ left=$form.Left; top=$form.Top; right=$form.Left+$form.Width; bottom=$form.Top+$form.Height }
     [AppBar]::SHAppBarMessage([AppBar]::ABM_NEW, [ref]$appBarData) | Out-Null
+    [AppBar]::SHAppBarMessage([AppBar]::ABM_QUERYPOS, [ref]$appBarData) | Out-Null
+    if ($position -eq "Top") { $appBarData.rc.bottom = $appBarData.rc.top + $global:BarThickness }
+    else { $appBarData.rc.top = $appBarData.rc.bottom - $global:BarThickness }
     [AppBar]::SHAppBarMessage([AppBar]::ABM_SETPOS, [ref]$appBarData) | Out-Null
-    $newWorkArea = New-Object AppBar+RECT -Property @{ left=$global:BaselineWorkArea.left; top=$workTop; right=$global:BaselineWorkArea.right; bottom=$workBottom }
-    [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$newWorkArea, [AppBar]::SPIF_UPDATEINIFILE) | Out-Null
-    Start-Sleep -Milliseconds 200
+    $form.SetBounds($appBarData.rc.left, $appBarData.rc.top, ($appBarData.rc.right - $appBarData.rc.left), ($appBarData.rc.bottom - $appBarData.rc.top))
     log "Updated AppBarPosition end - OK"
 }
 
@@ -414,7 +399,6 @@ function Update-Layout {
     $rightSorted = $rightButtons | Sort-Object { [int]$_.Tag.Order } -Descending
     foreach ($btn in $rightSorted) { $rightX -= $btn.Width ; $btn.Location = New-Object System.Drawing.Point($rightX, 0) ; $rightX -= $spacing }
     $g.Dispose()
-    Save-Settings
     log "Updating Layout end - OK"
 }
 
@@ -1248,7 +1232,7 @@ function Update-FileDrop($files) {
             for ($i = 1; $i -le 6; $i++) {
                 $existingButton.BackColor = if ($existingButton.BackColor -eq 'Orange') { $originalColor } else { 'Orange' }
                 [System.Windows.Forms.Application]::DoEvents()
-                Start-Sleep -Milliseconds 300
+                Start-Sleep -Milliseconds 200
             }
             $existingButton.BackColor = $originalColor
         } else {
@@ -1278,15 +1262,9 @@ $shortcutsPanel.Add_DragDrop({
 })
 
 [Microsoft.Win32.SystemEvents]::add_DisplaySettingsChanged({
-    $global:LastDisplaySettingsTime = Get-Date
     log "DisplaySettingsChanged event begin..."
-    if (-not $global:DebounceActive) {
-        $global:DebounceActive = $true
-        while (((Get-Date) - $global:LastDisplaySettingsTime).TotalSeconds -lt 2) { Start-Sleep -Milliseconds 100 ; [System.Windows.Forms.Application]::DoEvents() }
-        Update-AppBarPosition -position $global:Settings["ToolbarLocation"]
-        Update-Layout
-        $global:DebounceActive = $false
-    }
+    Update-AppBarPosition -position $global:Settings["ToolbarLocation"]
+    Update-Layout
     log "DisplaySettingsChanged event end..."
 })
 
@@ -1304,8 +1282,7 @@ function Import-INI {
     }
     
     if (-not (Test-Path -LiteralPath $FilePath)) {
-        [System.Windows.Forms.MessageBox]::Show("INI not readable.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-        Log "File not found: $FilePath"
+        Log "File not found : $FilePath"
         return
     }
     
@@ -1460,10 +1437,11 @@ $form.Add_Shown({ $form.ResumeLayout() ; Update-Layout ; log "Main Form loaded."
 
 $form.Add_FormClosing({
     log "Main Form closing."
-    if ($global:BaselineWorkArea) { [AppBar]::SystemParametersInfo([AppBar]::SPI_SETWORKAREA, 0, [ref]$global:BaselineWorkArea, [AppBar]::SPIF_UPDATEINIFILE) | Out-Null }
+    $appBarData = New-Object AppBar+APPBARDATA
+    $appBarData.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($appBarData)
+    $appBarData.hWnd = $form.Handle
+    [AppBar]::SHAppBarMessage([AppBar]::ABM_REMOVE, [ref]$appBarData) | Out-Null
     if ($script:AdminHelperProcess -and -not $script:AdminHelperProcess.HasExited) { log "Killing AdminHelperProcess..."; $script:AdminHelperProcess.Kill(); log "Killed AdminHelperProcess - OK" }
 })
 
 [System.Windows.Forms.Application]::Run($form)
-log "Self removing from $PSCommandPath"
-Remove-Item $PSCommandPath -Force
