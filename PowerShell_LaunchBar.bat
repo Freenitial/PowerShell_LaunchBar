@@ -320,8 +320,13 @@ function Update-AppBarPosition {
     $appBarData.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($appBarData)
     $appBarData.hWnd = $form.Handle
     $appBarData.uCallbackMessage = [NativeMethods]::RegisterWindowMessage("AppBarMessage")
-    [AppBar]::SHAppBarMessage([AppBar]::ABM_REMOVE, [ref]$appBarData) | Out-Null
-    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    # Capture clean working area before first registration, then register once
+    if (-not $script:AppBarRegistered) {
+        $script:CleanWorkingArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+        [AppBar]::SHAppBarMessage([AppBar]::ABM_NEW, [ref]$appBarData) | Out-Null
+        $script:AppBarRegistered = $true
+    }
+    $screen = $script:CleanWorkingArea
     if ($position -eq "Top") {
         $appBarData.uEdge = [AppBar]::ABE_TOP
         $appBarData.rc = New-Object AppBar+RECT -Property @{ left=$screen.Left; top=$screen.Top; right=$screen.Right; bottom=$screen.Top + $global:BarThickness }
@@ -329,7 +334,6 @@ function Update-AppBarPosition {
         $appBarData.uEdge = [AppBar]::ABE_BOTTOM
         $appBarData.rc = New-Object AppBar+RECT -Property @{ left=$screen.Left; top=$screen.Bottom - $global:BarThickness; right=$screen.Right; bottom=$screen.Bottom }
     }
-    [AppBar]::SHAppBarMessage([AppBar]::ABM_NEW, [ref]$appBarData) | Out-Null
     [AppBar]::SHAppBarMessage([AppBar]::ABM_QUERYPOS, [ref]$appBarData) | Out-Null
     if ($position -eq "Top") { $appBarData.rc.bottom = $appBarData.rc.top + $global:BarThickness }
     else { $appBarData.rc.top = $appBarData.rc.bottom - $global:BarThickness }
@@ -1263,6 +1267,12 @@ $shortcutsPanel.Add_DragDrop({
 
 [Microsoft.Win32.SystemEvents]::add_DisplaySettingsChanged({
     log "DisplaySettingsChanged event begin..."
+    $removeData = New-Object AppBar+APPBARDATA
+    $removeData.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($removeData)
+    $removeData.hWnd = $form.Handle
+    [AppBar]::SHAppBarMessage([AppBar]::ABM_REMOVE, [ref]$removeData) | Out-Null
+    $script:AppBarRegistered = $false
+    Start-Sleep -Milliseconds 200
     Update-AppBarPosition -position $global:Settings["ToolbarLocation"]
     Update-Layout
     log "DisplaySettingsChanged event end..."
@@ -1441,6 +1451,7 @@ $form.Add_FormClosing({
     $appBarData.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($appBarData)
     $appBarData.hWnd = $form.Handle
     [AppBar]::SHAppBarMessage([AppBar]::ABM_REMOVE, [ref]$appBarData) | Out-Null
+    $script:AppBarRegistered = $false
     if ($script:AdminHelperProcess -and -not $script:AdminHelperProcess.HasExited) { log "Killing AdminHelperProcess..."; $script:AdminHelperProcess.Kill(); log "Killed AdminHelperProcess - OK" }
 })
 
